@@ -3,15 +3,15 @@ package org.firstinspires.ftc.teamcode.Modules;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 /**
- * Custom PIDF Controller implementation supporting both Feedback (PID)
- * and Feedforward (kS, kV, kA) control for FTC robotics mechanisms.
+ * Custom PIDF Controller implementation supporting Feedback (PID)
+ * and Feedforward (kS, kV, kA, kG) control for FTC robotics mechanisms.
  */
 public class PIDController {
     private static final double ZERO = 1e-6;
 
     // Gains
     private double kP, kI, kD;
-    private double kS, kV, kA;
+    private double kS, kV, kA, kG;
 
     // State Tracking
     private double errorSum = 0;
@@ -36,7 +36,7 @@ public class PIDController {
     private final ElapsedTime timer = new ElapsedTime();
 
     /**
-     * Constructs a new PIDController with full feedback and feedforward gains.
+     * Constructs a new PIDController with standard feedback and motion feedforward gains.
      *
      * @param p Proportional gain (kP)
      * @param i Integral gain (kI)
@@ -46,17 +46,33 @@ public class PIDController {
      * @param a Acceleration feedforward gain (kA)
      */
     public PIDController(double p, double i, double d, double s, double v, double a) {
+        this(p, i, d, s, v, a, 0.0);
+    }
+
+    /**
+     * Constructs a new PIDController with feedback and full feedforward (including gravity feedforward).
+     *
+     * @param p Proportional gain (kP)
+     * @param i Integral gain (kI)
+     * @param d Derivative gain (kD)
+     * @param s Static friction feedforward gain (kS)
+     * @param v Velocity feedforward gain (kV)
+     * @param a Acceleration feedforward gain (kA)
+     * @param g Gravity feedforward gain (kG)
+     */
+    public PIDController(double p, double i, double d, double s, double v, double a, double g) {
         this.kP = p;
         this.kI = i;
         this.kD = d;
         this.kS = s;
         this.kV = v;
         this.kA = a;
+        this.kG = g;
         reset();
     }
 
     /**
-     * Updates the PID controller output for position-only control.
+     * Updates the PID controller output for position-only control with constant gravity compensation.
      * Target velocity is assumed to be zero.
      *
      * @param targetPosition  Desired target position in encoder ticks/units.
@@ -64,11 +80,12 @@ public class PIDController {
      * @return Motor power output constrained between -1.0 and 1.0.
      */
     public double update(double targetPosition, double currentPosition) {
-        return update(targetPosition, currentPosition, 0);
+        return update(targetPosition, currentPosition, 0, kG);
     }
 
     /**
-     * Updates the PID controller output using feedback (PID) and feedforward (kS, kV, kA).
+     * Updates the PID controller output using feedback (PID) and motion feedforward (kS, kV, kA),
+     * assuming constant gravity feedforward (e.g. vertical elevators).
      *
      * @param targetPosition  Desired target position in encoder ticks/units.
      * @param currentPosition Current measured position in encoder ticks/units.
@@ -76,6 +93,20 @@ public class PIDController {
      * @return Motor power output constrained between -1.0 and 1.0.
      */
     public double update(double targetPosition, double currentPosition, double targetVelocity) {
+        return update(targetPosition, currentPosition, targetVelocity, kG);
+    }
+
+    /**
+     * Updates the PID controller output using feedback (PID) and feedforward (kS, kV, kA, kG).
+     * Allows passing dynamic gravity feedforward (e.g., kG * Math.cos(angle) for pivoting arms).
+     *
+     * @param targetPosition  Desired target position in encoder ticks/units.
+     * @param currentPosition Current measured position in encoder ticks/units.
+     * @param targetVelocity  Planned velocity at this timestep in units/sec.
+     * @param effectiveKg     Dynamic gravity term for this cycle (e.g. kG or kG * Math.cos(angle)).
+     * @return Motor power output constrained between -1.0 and 1.0.
+     */
+    public double update(double targetPosition, double currentPosition, double targetVelocity, double effectiveKg) {
         double measuredDt = timer.seconds();
 
         if (measuredDt < ZERO) {
@@ -122,7 +153,7 @@ public class PIDController {
         // --- 1. Feedback (PID) ---
         double pidOutput = (kP * error) + (kI * errorSum) - (kD * derivative);
 
-        // --- 2. Feedforward (kS, kV, kA) ---
+        // --- 2. Feedforward (kS, kV, kA, kG) ---
         double targetAccel = (targetVelocity - lastTargetVelocity) / measuredDt;
         lastTargetVelocity = targetVelocity;
 
@@ -133,7 +164,7 @@ public class PIDController {
             staticFriction = kS * Math.signum(error);
         }
 
-        double ffOutput = staticFriction + (kV * targetVelocity) + (kA * targetAccel);
+        double ffOutput = staticFriction + (kV * targetVelocity) + (kA * targetAccel) + effectiveKg;
 
         // Combine and bound output
         output = pidOutput + ffOutput;
@@ -209,10 +240,18 @@ public class PIDController {
      * @param s Static friction feedforward gain (kS)
      * @param v Velocity feedforward gain (kV)
      * @param a Acceleration feedforward gain (kA)
+     * @param g Gravity feedforward gain (kG)
+     */
+    public void setPIDF(double p, double i, double d, double s, double v, double a, double g) {
+        this.kP = p; this.kI = i; this.kD = d;
+        this.kS = s; this.kV = v; this.kA = a; this.kG = g;
+    }
+
+    /**
+     * Bulk updates PID and motion Feedforward coefficients (sets kG to 0).
      */
     public void setPIDF(double p, double i, double d, double s, double v, double a) {
-        this.kP = p; this.kI = i; this.kD = d;
-        this.kS = s; this.kV = v; this.kA = a;
+        setPIDF(p, i, d, s, v, a, 0.0);
     }
 
     /** @param kP Proportional gain. */
@@ -233,6 +272,9 @@ public class PIDController {
     /** @param kA Acceleration feedforward gain. */
     public void setkA(double kA) { this.kA = kA; }
 
+    /** @param kG Gravity feedforward gain. */
+    public void setkG(double kG) { this.kG = kG; }
+
     /** @return Proportional gain (kP). */
     public double getkP() { return kP; }
 
@@ -250,6 +292,9 @@ public class PIDController {
 
     /** @return Acceleration feedforward gain (kA). */
     public double getkA() { return kA; }
+
+    /** @return Gravity feedforward gain (kG). */
+    public double getkG() { return kG; }
 
     /** @return Current integral error sum. */
     public double getErrorSum() { return errorSum; }
