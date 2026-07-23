@@ -44,5 +44,9 @@ public class PID_FF {
     @Sorter(sort = 11)
     public static double integralMax = 1.0;  // Maximum positive accumulation
     @Sorter(sort = 12)
-    public static double target = 0.0; // Custom target
+    public static double targetPos = 0.0; // Custom target
+    @Sorter(sort = 13)
+    public static double targetVel = 0.0;
+    @Sorter(sort = 14)
+    public static double targetAcc = 0.0;
 }
