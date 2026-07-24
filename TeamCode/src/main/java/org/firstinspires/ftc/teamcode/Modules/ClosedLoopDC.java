@@ -42,7 +42,7 @@ public class ClosedLoopDC {
         public int getLevel() { return level; }
     }
 
-    private final DcMotorEx motor;
+    private final SafeDcMotor motor;
     private PIDController pid;
 
     private double maxPower;
@@ -96,7 +96,7 @@ public class ClosedLoopDC {
      * @param maxPower    Maximum motor power limit (0.0 to 1.0).
      * @param ticksPerRev Encoder ticks per revolution of the motor/mechanism.
      */
-    public ClosedLoopDC(DcMotorEx motor, PIDController pid, double maxPower, double ticksPerRev) {
+    public ClosedLoopDC(SafeDcMotor motor, PIDController pid, double maxPower, double ticksPerRev) {
         this.motor = motor;
         this.pid = pid;
         this.maxPower = maxPower;
