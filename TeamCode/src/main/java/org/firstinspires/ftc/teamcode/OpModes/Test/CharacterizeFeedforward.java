@@ -57,7 +57,7 @@ public class CharacterizeFeedforward extends LinearOpMode {
                 requestOpModeStop();
             }
             double velocity = motor.getVelocity();
-            maxVelocity = Math.max(velocity,maxVelocity);
+            maxVelocity = Math.max(Math.abs(velocity),maxVelocity);
             // Detect kS (stiction break threshold)
             if (!kSFound && Math.abs(velocity) > START_THRESHOLD_VELOCITY) {
                 detectedKS = power;
