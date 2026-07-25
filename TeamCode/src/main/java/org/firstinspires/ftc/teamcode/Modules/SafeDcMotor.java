@@ -24,7 +24,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 public class SafeDcMotor {
 
     private final DcMotorEx motor;
-    private VoltageSensor voltageSensor = null;
+    private final VoltageSensor voltageSensor;
 
     // --- Slew Rate Limiting ---
     private boolean slewRateEnabled = false;

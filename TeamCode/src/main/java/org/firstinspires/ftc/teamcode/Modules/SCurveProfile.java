@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.Subsystems;
+package org.firstinspires.ftc.teamcode.Modules;
 
 /**
  * 7-Segment Jerk-Limited S-Curve Motion Profile Generator.
@@ -81,7 +81,6 @@ public class SCurveProfile {
             t4 = 0; // No cruising phase
             t5 = tj;
             t6 = 0;
-            t7 = tj;
         } else {
             // Check if max velocity is reached
             double dAccelPhase = actualMaxAccel * (tj * tj) + (maxVel - vAccelRamp) * (actualMaxAccel / maxJerk + (maxVel - vAccelRamp) / actualMaxAccel);
@@ -96,9 +95,6 @@ public class SCurveProfile {
                 double dCruise = this.distance - 2 * dAccel;
                 t4 = dCruise / actualMaxVel;
 
-                t5 = tj;
-                t6 = t2;
-                t7 = tj;
             } else {
                 // Reaches max accel, but not max velocity
                 t1 = tj;
@@ -108,11 +104,11 @@ public class SCurveProfile {
                 t2 = (vPeak - vAccelRamp) / actualMaxAccel;
                 t4 = 0; // No cruise phase
 
-                t5 = tj;
-                t6 = t2;
-                t7 = tj;
             }
+            t5 = tj;
+            t6 = t2;
         }
+        t7 = tj;
 
         totalTime = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     }
@@ -127,9 +123,9 @@ public class SCurveProfile {
         if (t <= 0) return new ProfileState(0, 0, 0);
         if (t >= totalTime) return new ProfileState(distance * direction, 0, 0);
 
-        double pos = 0;
-        double vel = 0;
-        double accel = 0;
+        double pos;
+        double vel;
+        double accel;
 
         // Phase 1: Accel Ramp Up
         if (t <= t1) {

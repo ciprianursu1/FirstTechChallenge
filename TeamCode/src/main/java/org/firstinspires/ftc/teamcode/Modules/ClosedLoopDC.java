@@ -4,7 +4,6 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
-import org.firstinspires.ftc.teamcode.Subsystems.SCurveProfile;
 
 /**
  * Wrapper class for an FTC DcMotorEx providing closed-loop PIDF control,
@@ -51,7 +50,7 @@ public class ClosedLoopDC {
     private final double ticksPerRev;
 
     // S-Curve Motion Profiling
-    private SCurveProfile sCurveProfile;
+    private final SCurveProfile sCurveProfile;
     private final ElapsedTime profileTimer = new ElapsedTime();
     private boolean profilingActive = false;
     private double profileStartPosition = 0;
@@ -234,6 +233,7 @@ public class ClosedLoopDC {
         if (enabled) {
             motor.setPower(power);
         }
+        motor.update();
     }
 
     /** @return True if an S-Curve motion profile is actively being executed. */
