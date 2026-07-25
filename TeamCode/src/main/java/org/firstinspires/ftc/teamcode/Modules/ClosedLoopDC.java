@@ -203,6 +203,7 @@ public class ClosedLoopDC {
             lastPidCurrent = lastCurrent;
             lastPidOutput = 0;
             lastPower = 0;
+            motor.update();
             return;
         }
 
