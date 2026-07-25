@@ -64,8 +64,6 @@ public class CharacterizeFeedforward extends LinearOpMode {
                 kSFound = true;
             }
 
-            // Record data row for CSV export / FTCDashboard plotting
-
             // Driver Station Display
             telemetry.addData("Status", "Ramping Power...");
             telemetry.addData("Commanded Power", "%.3f", power);

@@ -19,8 +19,8 @@ public class CharacterizeKA extends LinearOpMode {
     private static final double TEST_DURATION = 1.5; // Seconds to run test
 
     private DcMotorEx motor;
-    private ElapsedTime runtime = new ElapsedTime();
-    private ElapsedTime dtTimer = new ElapsedTime();
+    private final ElapsedTime runtime = new ElapsedTime();
+    private final ElapsedTime dtTimer = new ElapsedTime();
 
     @Override
     public void runOpMode() {
