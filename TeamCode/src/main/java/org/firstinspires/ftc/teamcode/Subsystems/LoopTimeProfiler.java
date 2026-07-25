@@ -11,7 +11,7 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
  */
 public class LoopTimeProfiler {
 
-    private Telemetry telemetry;
+    private final Telemetry telemetry;
 
     private long lastTimeNs = 0;
     private long loopTimeNs = 0;

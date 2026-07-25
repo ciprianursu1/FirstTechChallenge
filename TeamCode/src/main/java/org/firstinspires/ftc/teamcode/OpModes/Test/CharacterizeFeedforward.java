@@ -13,8 +13,8 @@ public class CharacterizeFeedforward extends LinearOpMode {
     private static final double START_THRESHOLD_VELOCITY = 10.0; // Ticks/sec to register as "moving"
 
     private DcMotorEx motor;
-    private ElapsedTime runtime = new ElapsedTime();
-    private ElapsedTime stepTimer = new ElapsedTime();
+    private final ElapsedTime runtime = new ElapsedTime();
+    private final ElapsedTime stepTimer = new ElapsedTime();
 
     @Override
     public void runOpMode() {
@@ -37,6 +37,7 @@ public class CharacterizeFeedforward extends LinearOpMode {
         double detectedKS = -1;
         boolean kSFound = false;
         boolean emergencyStop = false;
+        double maxVelocity = 0;
 
 
         while (opModeIsActive() && power <= 1.0) {
@@ -56,7 +57,7 @@ public class CharacterizeFeedforward extends LinearOpMode {
                 requestOpModeStop();
             }
             double velocity = motor.getVelocity();
-
+            maxVelocity = Math.max(velocity,maxVelocity);
             // Detect kS (stiction break threshold)
             if (!kSFound && Math.abs(velocity) > START_THRESHOLD_VELOCITY) {
                 detectedKS = power;
@@ -84,7 +85,6 @@ public class CharacterizeFeedforward extends LinearOpMode {
         motor.setPower(0);
 
         // --- Calculate estimated kV from max speed ---
-        double maxVelocity = motor.getVelocity();
         double estimatedKV = (maxVelocity > 0) ? (1.0 / maxVelocity) : 0;
 
         telemetry.clearAll();
