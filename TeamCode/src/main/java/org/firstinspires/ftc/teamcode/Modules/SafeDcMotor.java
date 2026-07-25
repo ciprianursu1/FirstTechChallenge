@@ -56,7 +56,7 @@ public class SafeDcMotor {
         this.motor = hardwareMap.get(DcMotorEx.class, deviceName);
 
         // Attempt to retrieve primary VoltageSensor
-        this.voltageSensor = hardwareMap.get(VoltageSensor.class, "Control Hub");
+        this.voltageSensor = hardwareMap.voltageSensor.iterator().next();
     }
 
     /**
