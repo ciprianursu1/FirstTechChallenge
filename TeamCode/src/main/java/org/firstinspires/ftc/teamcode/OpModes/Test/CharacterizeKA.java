@@ -4,85 +4,87 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.util.ElapsedTime;
+import org.firstinspires.ftc.teamcode.PanelsParameters.SysIdParameters;
 
 @TeleOp(name = "SysId: kA Characterization", group = "Tuning")
 public class CharacterizeKA extends LinearOpMode {
-
-    // --- CONFIGURATION ---
-    private static final String MOTOR_NAME = "armMotor";
-
-    // Fill these in from your previous kS/kV test!
-    private static final double KNOWN_KS = 0.08; // Static friction power offset
-    private static final double KNOWN_KV = 0.0004; // Power per (ticks/sec)
-
-    private static final double STEP_POWER = 0.70; // 70% step voltage
-    private static final double TEST_DURATION = 1.5; // Seconds to run test
-
     private DcMotorEx motor;
     private final ElapsedTime runtime = new ElapsedTime();
     private final ElapsedTime dtTimer = new ElapsedTime();
 
     @Override
     public void runOpMode() {
-        motor = hardwareMap.get(DcMotorEx.class, MOTOR_NAME);
+        motor = hardwareMap.get(DcMotorEx.class, SysIdParameters.motorName);
         motor.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotorEx.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotorEx.ZeroPowerBehavior.BRAKE);
 
         telemetry.addLine("=== kA DYNAMIC STEP TEST ===");
-        telemetry.addLine("Enter your known kS and kV in the code constants first!");
-        telemetry.addLine("Make sure mechanism has full room to accelerate rapidly.");
-        telemetry.addLine("\n[!] Press CIRCLE on either gamepad at ANY time for Emergency Stop.");
-        telemetry.addLine("\nPress PLAY to run step test.");
+        telemetry.addLine("Enter known kS, kV, and kG in SysIdParameters first.");
+        telemetry.addLine("Press CIRCLE on either gamepad for emergency stop.");
         telemetry.update();
 
         waitForStart();
 
-        // High frequency loop variables
-        double lastVelocity = 0;
-        double filteredAccel = 0;
-        double alpha = 0.3; // Low-pass filter coefficient for smooth acceleration
-
-        double runningKaSum = 0;
+        double lastVelocity = 0.0;
+        double filteredAccel = 0.0;
+        double runningKaSum = 0.0;
         int validSamples = 0;
         boolean emergencyStopped = false;
 
         runtime.reset();
         dtTimer.reset();
 
-        // Apply instant step power
-        motor.setPower(STEP_POWER);
-
-        while (opModeIsActive() && runtime.seconds() < TEST_DURATION) {
-            // Check for Emergency Stop (Circle button on Gamepad 1 or Gamepad 2)
+        while (opModeIsActive()
+                && runtime.seconds() < SysIdParameters.stepTestDuration) {
             if (gamepad1.circle || gamepad2.circle) {
                 emergencyStopped = true;
                 break;
             }
 
             double dt = dtTimer.seconds();
-            if (dt < 1e-4) continue; // Safety guard against 0 division
+            if (dt < 1e-4) continue;
             dtTimer.reset();
 
-            double currentVelocity = motor.getVelocity();
+            double gravityPower =
+                    SysIdParameters.getGravityFeedforward(motor.getCurrentPosition());
+            double motorPower = SysIdParameters.clampMotorPower(
+                    gravityPower
+                            + (SysIdParameters.characterizationPowerSign
+                                    * SysIdParameters.stepPower));
+            motor.setPower(motorPower);
+
+            double currentVelocity =
+                    motor.getVelocity() * SysIdParameters.encoderVelocitySign;
             double rawAccel = (currentVelocity - lastVelocity) / dt;
             lastVelocity = currentVelocity;
 
-            // Low-pass filter to clean up encoder jitter
-            filteredAccel = (alpha * rawAccel) + ((1.0 - alpha) * filteredAccel);
+            filteredAccel =
+                    (SysIdParameters.accelerationFilterAlpha * rawAccel)
+                            + ((1.0 - SysIdParameters.accelerationFilterAlpha)
+                                    * filteredAccel);
 
-            // Calculate instantaneous kA when mechanism is accelerating (a > 100 ticks/s^2)
-            double calculatedKa = 0;
-            if (filteredAccel > 100.0) {
-                // Voltage left over strictly dedicated to inertia = Total Power - kS - (kV * v)
-                double powerForInertia = STEP_POWER - KNOWN_KS - (KNOWN_KV * currentVelocity);
+            double signedMovementPower =
+                    (motorPower - gravityPower)
+                            * SysIdParameters.characterizationPowerSign;
+            double calculatedKa = 0.0;
+
+            if (filteredAccel > SysIdParameters.accelerationThreshold) {
+                double powerForInertia =
+                        signedMovementPower
+                                - SysIdParameters.knownKS
+                                - (SysIdParameters.knownKV * currentVelocity);
                 calculatedKa = powerForInertia / filteredAccel;
 
-                runningKaSum += calculatedKa;
-                validSamples++;
+                if (calculatedKa > 0) {
+                    runningKaSum += calculatedKa;
+                    validSamples++;
+                }
             }
 
             telemetry.addData("Status", "Running Step Function...");
+            telemetry.addData("Gravity Power", "%.3f", gravityPower);
+            telemetry.addData("Commanded Power", "%.3f", motorPower);
             telemetry.addData("Velocity", "%.1f ticks/s", currentVelocity);
             telemetry.addData("Filtered Accel", "%.1f ticks/s^2", filteredAccel);
             telemetry.addData("Instantaneous kA", "%.8f", calculatedKa);
@@ -90,11 +92,9 @@ public class CharacterizeKA extends LinearOpMode {
             telemetry.update();
         }
 
-        // Safety stop: cut motor power immediately
         motor.setPower(0);
 
-        // Average the valid kA samples captured during ramp-up
-        double finalKa = (validSamples > 0) ? (runningKaSum / validSamples) : 0;
+        double finalKa = validSamples > 0 ? runningKaSum / validSamples : 0.0;
 
         telemetry.clearAll();
         if (emergencyStopped) {
@@ -108,7 +108,7 @@ public class CharacterizeKA extends LinearOpMode {
         telemetry.update();
 
         while (opModeIsActive()) {
-            idle(); // Keep final status on screen
+            idle();
         }
     }
 }

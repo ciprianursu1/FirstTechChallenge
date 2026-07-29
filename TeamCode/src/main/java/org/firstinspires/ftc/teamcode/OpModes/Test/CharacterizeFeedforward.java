@@ -4,95 +4,111 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.util.ElapsedTime;
+import org.firstinspires.ftc.teamcode.PanelsParameters.SysIdParameters;
+
 @TeleOp(name = "SysId: kS & kV Characterization", group = "Tuning")
 public class CharacterizeFeedforward extends LinearOpMode {
-
-    // --- Configuration Constants ---
-    private static final String MOTOR_NAME = "armMotor"; // Change to your motor name
-    private static final double RAMP_RATE_PER_SEC = 0.05;  // Power increase per second (0.05 = 20s to max)
-    private static final double START_THRESHOLD_VELOCITY = 10.0; // Ticks/sec to register as "moving"
-
     private DcMotorEx motor;
-    private final ElapsedTime runtime = new ElapsedTime();
     private final ElapsedTime stepTimer = new ElapsedTime();
 
     @Override
     public void runOpMode() {
-        motor = hardwareMap.get(DcMotorEx.class, MOTOR_NAME);
+        motor = hardwareMap.get(DcMotorEx.class, SysIdParameters.motorName);
         motor.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotorEx.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotorEx.ZeroPowerBehavior.BRAKE);
 
         telemetry.addLine("=== FEEDFORWARD CHARACTERIZATION ===");
-        telemetry.addLine("1. Make sure mechanism is flat or has free range of motion!");
-        telemetry.addLine("2. Press PLAY to start automated voltage ramp-up.");
-        telemetry.addLine("3. Press CIRCLE to emergency stop!");
+        telemetry.addLine("Tune kG first for arms/elevators, then run this test.");
+        telemetry.addLine("Press CIRCLE to emergency stop.");
         telemetry.update();
 
         waitForStart();
-        runtime.reset();
         stepTimer.reset();
 
-        double power = 0.0;
-        double detectedKS = -1;
+        double rampPower = 0.0;
+        double detectedKS = -1.0;
+        double runningKvSum = 0.0;
+        int validKvSamples = 0;
         boolean kSFound = false;
-        boolean emergencyStop = false;
-        double maxVelocity = 0;
+        boolean emergencyStopped = false;
 
+        while (opModeIsActive() && rampPower <= SysIdParameters.maxRampPower) {
+            if (gamepad1.circleWasPressed() || gamepad2.circleWasPressed()) {
+                emergencyStopped = true;
+                break;
+            }
 
-        while (opModeIsActive() && power <= 1.0) {
-            if(gamepad1.circleWasPressed() || gamepad2.circleWasPressed()) emergencyStop = true;
             double dt = stepTimer.seconds();
             stepTimer.reset();
 
-            // Gradually ramp up motor power over time
-            power += RAMP_RATE_PER_SEC * dt;
-            power = Math.min(power, 1.0); // Clamp to 1.0
-            if(!emergencyStop) motor.setPower(power);
-            else {
-                motor.setPower(0);
-                telemetry.clearAll();
-                telemetry.addLine("EMERGENCY STOP");
-                telemetry.update();
-                requestOpModeStop();
-            }
-            double velocity = motor.getVelocity();
-            maxVelocity = Math.max(Math.abs(velocity),maxVelocity);
-            // Detect kS (stiction break threshold)
-            if (!kSFound && Math.abs(velocity) > START_THRESHOLD_VELOCITY) {
-                detectedKS = power;
+            rampPower += SysIdParameters.rampRatePerSec * dt;
+            rampPower = Math.min(rampPower, SysIdParameters.maxRampPower);
+
+            double gravityPower =
+                    SysIdParameters.getGravityFeedforward(motor.getCurrentPosition());
+            double motorPower = SysIdParameters.clampMotorPower(
+                    gravityPower
+                            + (SysIdParameters.characterizationPowerSign * rampPower));
+            motor.setPower(motorPower);
+
+            double movementPower =
+                    Math.max(
+                            0.0,
+                            (motorPower - gravityPower)
+                                    * SysIdParameters.characterizationPowerSign);
+            double signedVelocity = motor.getVelocity() * SysIdParameters.encoderVelocitySign;
+            double absVelocity = Math.abs(signedVelocity);
+
+            if (!kSFound && absVelocity > SysIdParameters.startThresholdVelocity) {
+                detectedKS = movementPower;
                 kSFound = true;
             }
 
-            // Driver Station Display
+            double instantKV = 0.0;
+            if (kSFound
+                    && absVelocity > SysIdParameters.startThresholdVelocity
+                    && movementPower > detectedKS) {
+                instantKV = (movementPower - detectedKS) / absVelocity;
+                runningKvSum += instantKV;
+                validKvSamples++;
+            }
+
             telemetry.addData("Status", "Ramping Power...");
-            telemetry.addData("Commanded Power", "%.3f", power);
-            telemetry.addData("Current Velocity", "%.1f ticks/s", velocity);
+            telemetry.addData("Ramp Power", "%.3f", rampPower);
+            telemetry.addData("Movement Power", "%.3f", movementPower);
+            telemetry.addData("Gravity Power", "%.3f", gravityPower);
+            telemetry.addData("Commanded Power", "%.3f", motorPower);
+            telemetry.addData("Velocity", "%.1f ticks/s", signedVelocity);
+            telemetry.addData("Instant kV", "%.7f", instantKV);
 
             if (kSFound) {
-                telemetry.addData(">> ESTIMATED kS <<", "%.4f (Power)", detectedKS);
+                telemetry.addData(">> ESTIMATED kS <<", "%.4f", detectedKS);
             } else {
                 telemetry.addData(">> ESTIMATED kS <<", "Searching...");
             }
 
             telemetry.update();
-            sleep(20); // ~50 Hz update loop
+            sleep(20);
         }
 
-        // Stop motor at end of test
         motor.setPower(0);
 
-        // --- Calculate estimated kV from max speed ---
-        double estimatedKV = (maxVelocity > 0) ? (1.0 / maxVelocity) : 0;
+        double estimatedKV = validKvSamples > 0 ? runningKvSum / validKvSamples : 0.0;
 
         telemetry.clearAll();
-        telemetry.addLine("=== TEST COMPLETE ===");
-        telemetry.addData("Final Estimated kS", "%.4f", detectedKS);
-        telemetry.addData("Final Estimated kV", "%.6f (Power per tick/sec)", estimatedKV);
+        if (emergencyStopped) {
+            telemetry.addLine("=== EMERGENCY STOP TRIGGERED ===");
+        } else {
+            telemetry.addLine("=== TEST COMPLETE ===");
+            telemetry.addData("Final Estimated kS", "%.4f", detectedKS);
+            telemetry.addData("Final Estimated kV", "%.7f (Power per tick/sec)", estimatedKV);
+            telemetry.addData("kV Samples", validKvSamples);
+        }
         telemetry.update();
 
         while (opModeIsActive()) {
-            idle(); // Hold results on screen until stopped
+            idle();
         }
     }
 }
