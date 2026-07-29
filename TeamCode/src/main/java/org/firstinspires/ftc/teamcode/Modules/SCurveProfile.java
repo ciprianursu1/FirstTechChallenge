@@ -5,6 +5,7 @@ package org.firstinspires.ftc.teamcode.Modules;
  * Calculates kinematic targets (position, velocity, acceleration) for smooth physical movement.
  */
 public class SCurveProfile {
+    private static final double EPSILON = 1e-9;
 
     private double maxVel;
     private double maxAccel;
@@ -42,75 +43,97 @@ public class SCurveProfile {
      * @param distance Total travel distance (units)
      */
     public void generate(double maxVel, double maxAccel, double maxJerk, double distance) {
-        this.direction = distance >= 0 ? 1 : -1;
-        this.distance = Math.abs(distance);
-        this.maxVel = maxVel;
-        this.maxAccel = maxAccel;
-        this.maxJerk = maxJerk;
-
-        if (this.distance == 0) {
-            t1 = t2 = t3 = t4 = t5 = t6 = t7 = totalTime = 0;
+        if (!isUsable(maxVel) || !isUsable(maxAccel) || !isUsable(maxJerk) || !Double.isFinite(distance)) {
+            resetProfile();
             return;
         }
 
-        // Time required to reach peak acceleration
-        double tj = maxAccel / maxJerk;
+        this.direction = distance >= 0 ? 1 : -1;
+        this.distance = Math.abs(distance);
+        this.maxVel = Math.abs(maxVel);
+        this.maxAccel = Math.abs(maxAccel);
+        this.maxJerk = Math.abs(maxJerk);
 
-        // Check if max acceleration is reachable
-        if (maxVel < tj * maxAccel) {
-            tj = Math.sqrt(maxVel / maxJerk);
-            actualMaxAccel = tj * maxJerk;
-        } else {
-            actualMaxAccel = maxAccel;
+        if (this.distance < EPSILON) {
+            resetProfile();
+            return;
         }
 
-        // Velocity reached after accel ramp up + ramp down
-        double vAccelRamp = actualMaxAccel * tj;
+        double maxReachableVel = this.maxVel;
+        double fullAccelDistance =
+                calculateAccelerationDistance(maxReachableVel, this.maxAccel, this.maxJerk);
 
-        // Distance covered during acceleration phase (Ramp up + Constant Accel + Ramp down)
-        // If profile can reach max velocity
-        if (this.distance < 2 * vAccelRamp) {
-            // Can't reach max accel or max vel
-            tj = Math.cbrt(this.distance / (2.0 * maxJerk));
-            actualMaxAccel = tj * maxJerk;
-            actualMaxVel = actualMaxAccel * tj;
-
-            t1 = tj;
-            t2 = 0; // No constant acceleration phase
-            t3 = tj;
-            t4 = 0; // No cruising phase
-            t5 = tj;
-            t6 = 0;
+        if (this.distance >= 2.0 * fullAccelDistance) {
+            actualMaxVel = maxReachableVel;
+            configureAccelTimesForVelocity(actualMaxVel);
+            t4 = (this.distance - (2.0 * fullAccelDistance)) / actualMaxVel;
         } else {
-            // Check if max velocity is reached
-            double dAccelPhase = actualMaxAccel * (tj * tj) + (maxVel - vAccelRamp) * (actualMaxAccel / maxJerk + (maxVel - vAccelRamp) / actualMaxAccel);
-
-            if (this.distance >= 2 * dAccelPhase) {
-                actualMaxVel = maxVel;
-                t1 = tj;
-                t2 = (actualMaxVel - vAccelRamp) / actualMaxAccel;
-                t3 = tj;
-
-                double dAccel = actualMaxVel * (t1 + t2);
-                double dCruise = this.distance - 2 * dAccel;
-                t4 = dCruise / actualMaxVel;
-
-            } else {
-                // Reaches max accel, but not max velocity
-                t1 = tj;
-                t3 = tj;
-                double vPeak = Math.sqrt(actualMaxAccel * actualMaxAccel * tj * tj + actualMaxAccel * (this.distance - 2 * actualMaxAccel * tj * tj));
-                actualMaxVel = vPeak;
-                t2 = (vPeak - vAccelRamp) / actualMaxAccel;
-                t4 = 0; // No cruise phase
-
-            }
-            t5 = tj;
-            t6 = t2;
+            actualMaxVel = calculateVelocityForAccelerationDistance(this.distance / 2.0, this.maxAccel, this.maxJerk);
+            configureAccelTimesForVelocity(actualMaxVel);
+            t4 = 0.0;
         }
-        t7 = tj;
 
         totalTime = t1 + t2 + t3 + t4 + t5 + t6 + t7;
+    }
+
+    /**
+     * Computes a conservative jerk-limited stopping distance from current speed to zero speed.
+     */
+    public static double calculateStoppingDistance(double velocity, double maxAccel, double maxJerk) {
+        return calculateAccelerationDistance(velocity, maxAccel, maxJerk);
+    }
+
+    /**
+     * Computes the distance needed to accelerate from zero to {@code velocity}
+     * with zero start and end acceleration.
+     */
+    public static double calculateAccelerationDistance(double velocity, double maxAccel, double maxJerk) {
+        if (!isUsable(maxAccel) || !isUsable(maxJerk) || !Double.isFinite(velocity)) {
+            return 0.0;
+        }
+
+        double v = Math.abs(velocity);
+        if (v < EPSILON) {
+            return 0.0;
+        }
+
+        double accel = Math.abs(maxAccel);
+        double jerk = Math.abs(maxJerk);
+        double velocityLostDuringJerk = (accel * accel) / jerk;
+
+        if (v <= velocityLostDuringJerk) {
+            double jerkTime = Math.sqrt(v / jerk);
+            return v * jerkTime;
+        }
+
+        double jerkTime = accel / jerk;
+        double constantAccelTime = (v - velocityLostDuringJerk) / accel;
+        return 0.5 * v * ((2.0 * jerkTime) + constantAccelTime);
+    }
+
+    /**
+     * Computes the time needed to accelerate from zero to {@code velocity}
+     * with zero start and end acceleration.
+     */
+    public static double calculateAccelerationTime(double velocity, double maxAccel, double maxJerk) {
+        if (!isUsable(maxAccel) || !isUsable(maxJerk) || !Double.isFinite(velocity)) {
+            return 0.0;
+        }
+
+        double v = Math.abs(velocity);
+        if (v < EPSILON) {
+            return 0.0;
+        }
+
+        double accel = Math.abs(maxAccel);
+        double jerk = Math.abs(maxJerk);
+        double velocityLostDuringJerk = (accel * accel) / jerk;
+
+        if (v <= velocityLostDuringJerk) {
+            return 2.0 * Math.sqrt(v / jerk);
+        }
+
+        return (2.0 * accel / jerk) + ((v - velocityLostDuringJerk) / accel);
     }
 
     /**
@@ -120,8 +143,12 @@ public class SCurveProfile {
      * @return Target {@link ProfileState} at time {@code t}
      */
     public ProfileState calculate(double t) {
-        if (t <= 0) return new ProfileState(0, 0, 0);
-        if (t >= totalTime) return new ProfileState(distance * direction, 0, 0);
+        if (!Double.isFinite(t) || t <= 0 || totalTime <= 0) {
+            return new ProfileState(0, 0, 0);
+        }
+        if (t >= totalTime) {
+            return new ProfileState(distance * direction, 0, 0);
+        }
 
         double pos;
         double vel;
@@ -185,5 +212,61 @@ public class SCurveProfile {
 
     public double getTotalTime() {
         return totalTime;
+    }
+
+    public double getDistance() {
+        return distance * direction;
+    }
+
+    private void configureAccelTimesForVelocity(double velocity) {
+        double v = Math.max(0.0, Math.min(Math.abs(velocity), maxVel));
+        double velocityLostDuringJerk = (maxAccel * maxAccel) / maxJerk;
+
+        if (v <= velocityLostDuringJerk) {
+            t1 = Math.sqrt(v / maxJerk);
+            t2 = 0.0;
+            t3 = t1;
+            actualMaxAccel = maxJerk * t1;
+        } else {
+            t1 = maxAccel / maxJerk;
+            t2 = (v - velocityLostDuringJerk) / maxAccel;
+            t3 = t1;
+            actualMaxAccel = maxAccel;
+        }
+
+        actualMaxVel = v;
+        t5 = t1;
+        t6 = t2;
+        t7 = t3;
+    }
+
+    private static double calculateVelocityForAccelerationDistance(double distance, double maxAccel, double maxJerk) {
+        if (!isUsable(maxAccel) || !isUsable(maxJerk) || !Double.isFinite(distance) || distance <= 0) {
+            return 0.0;
+        }
+
+        double accel = Math.abs(maxAccel);
+        double jerk = Math.abs(maxJerk);
+        double jerkOnlyLimitDistance = (accel * accel * accel) / (jerk * jerk);
+
+        if (distance <= jerkOnlyLimitDistance) {
+            return Math.cbrt(distance * distance * jerk);
+        }
+
+        double b = (accel * accel) / jerk;
+        return 0.5 * (-b + Math.sqrt((b * b) + (8.0 * accel * distance)));
+    }
+
+    private static boolean isUsable(double value) {
+        return Double.isFinite(value) && Math.abs(value) > EPSILON;
+    }
+
+    private void resetProfile() {
+        t1 = t2 = t3 = t4 = t5 = t6 = t7 = 0.0;
+        totalTime = 0.0;
+        actualMaxAccel = 0.0;
+        actualMaxVel = 0.0;
+        distance = 0.0;
+        direction = 1;
     }
 }

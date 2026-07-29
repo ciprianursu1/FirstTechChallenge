@@ -53,10 +53,15 @@ public class ClosedLoopDC {
     private final SCurveProfile sCurveProfile;
     private final ElapsedTime profileTimer = new ElapsedTime();
     private boolean profilingActive = false;
+    private boolean brakingForReprofile = false;
     private double profileStartPosition = 0;
+    private double profileTimeOffset = 0;
+    private double activeProfileTarget = 0;
     private double maxVel = 0;
     private double maxAccel = 0;
     private double maxJerk = 0;
+    private static final double TARGET_EPSILON = 1e-4;
+    private static final double VELOCITY_EPSILON = 1e-3;
 
     // Telemetry configuration
     private TelemetryVerbosity verbosity = TelemetryVerbosity.STANDARD;
@@ -87,6 +92,29 @@ public class ClosedLoopDC {
         return angle - 180;
     }
 
+    private double getSignedDistance(double from, double to) {
+        double distance = to - from;
+        return angleMode ? wrapAngle(distance) : distance;
+    }
+
+    private double getCurrentVelocity() {
+        double velocity = motor.getVelocity();
+        if (!Double.isFinite(velocity)) {
+            return 0.0;
+        }
+        if (angleMode && Math.abs(ticksPerRev) > VELOCITY_EPSILON) {
+            return velocity * 360.0 / ticksPerRev;
+        }
+        return velocity;
+    }
+
+    private double ticksToUnits(double ticks) {
+        if (angleMode && Math.abs(ticksPerRev) > VELOCITY_EPSILON) {
+            return ticks * 360.0 / ticksPerRev;
+        }
+        return ticks;
+    }
+
     /**
      * Constructs a ClosedLoopDC motor controller wrapper.
      *
@@ -113,9 +141,9 @@ public class ClosedLoopDC {
      * @param maxJerk  Maximum jerk limit (ticks/sec^3 or deg/sec^3).
      */
     public void setSCurveConstraints(double maxVel, double maxAccel, double maxJerk) {
-        this.maxVel = Math.abs(maxVel);
-        this.maxAccel = Math.abs(maxAccel);
-        this.maxJerk = Math.abs(maxJerk);
+        this.maxVel = Double.isFinite(maxVel) ? Math.abs(maxVel) : 0.0;
+        this.maxAccel = Double.isFinite(maxAccel) ? Math.abs(maxAccel) : 0.0;
+        this.maxJerk = Double.isFinite(maxJerk) ? Math.abs(maxJerk) : 0.0;
     }
 
     /**
@@ -141,18 +169,101 @@ public class ClosedLoopDC {
             return;
         }
 
-        double currentPos = getCurrentPosition();
-        double distance = targetPosition - currentPos;
+        lastTarget = targetPosition;
+        startDynamicProfile(targetPosition);
+    }
 
-        if (angleMode) {
-            distance = wrapAngle(distance);
+    private void startDynamicProfile(double targetPosition) {
+        double currentPos = getCurrentPosition();
+        double currentVelocity = getCurrentVelocity();
+
+        if (!Double.isFinite(targetPosition) || !Double.isFinite(currentPos) || !Double.isFinite(currentVelocity)) {
+            profilingActive = false;
+            brakingForReprofile = false;
+            return;
         }
 
-        this.lastTarget = targetPosition;
-        this.profileStartPosition = currentPos;
-        this.sCurveProfile.generate(maxVel, maxAccel, maxJerk, distance);
-        this.profileTimer.reset();
-        this.profilingActive = true;
+        double distance = getSignedDistance(currentPos, targetPosition);
+        double absDistance = Math.abs(distance);
+        double absVelocity = Math.abs(currentVelocity);
+
+        if (absDistance < TARGET_EPSILON && absVelocity < VELOCITY_EPSILON) {
+            profilingActive = false;
+            brakingForReprofile = false;
+            activeProfileTarget = targetPosition;
+            return;
+        }
+
+        double stoppingDistance =
+                SCurveProfile.calculateStoppingDistance(absVelocity, maxAccel, maxJerk);
+        double targetDirection = Math.signum(distance);
+        double velocityTowardTarget = currentVelocity * targetDirection;
+        boolean movingAway = absVelocity > VELOCITY_EPSILON && velocityTowardTarget <= 0;
+        boolean overSpeed = absVelocity > maxVel;
+        boolean cannotStopBeforeTarget =
+                absVelocity > VELOCITY_EPSILON
+                        && stoppingDistance + TARGET_EPSILON >= absDistance;
+
+        if (movingAway || overSpeed || cannotStopBeforeTarget) {
+            double brakeDirection = Math.signum(currentVelocity);
+            if (brakeDirection == 0) {
+                brakeDirection = targetDirection == 0 ? 1.0 : targetDirection;
+            }
+            double brakeDistance = Math.max(stoppingDistance, TARGET_EPSILON);
+            double brakeTarget = currentPos + (brakeDirection * brakeDistance);
+            generateProfileFromMotion(brakeTarget, currentPos, currentVelocity);
+            brakingForReprofile = profilingActive;
+            return;
+        }
+
+        generateProfileFromMotion(targetPosition, currentPos, currentVelocity);
+        brakingForReprofile = false;
+    }
+
+    private void generateProfileFromMotion(double targetPosition, double currentPos, double currentVelocity) {
+        double distance = getSignedDistance(currentPos, targetPosition);
+        double direction = Math.signum(distance);
+        double absDistance = Math.abs(distance);
+
+        if (direction == 0 || absDistance < TARGET_EPSILON) {
+            profilingActive = false;
+            activeProfileTarget = targetPosition;
+            return;
+        }
+
+        double signedVelocity = currentVelocity * direction;
+        double profileVelocity = Math.max(0.0, Math.min(Math.abs(signedVelocity), maxVel));
+
+        if (signedVelocity <= VELOCITY_EPSILON || profileVelocity < VELOCITY_EPSILON) {
+            profileStartPosition = currentPos;
+            profileTimeOffset = 0.0;
+            activeProfileTarget = targetPosition;
+            sCurveProfile.generate(maxVel, maxAccel, maxJerk, distance);
+            profileTimer.reset();
+            profilingActive = sCurveProfile.getTotalTime() > 0;
+            return;
+        }
+
+        double accelerationDistance =
+                SCurveProfile.calculateAccelerationDistance(profileVelocity, maxAccel, maxJerk);
+        double totalProfileDistance = absDistance + accelerationDistance;
+
+        if (!Double.isFinite(totalProfileDistance) || totalProfileDistance < TARGET_EPSILON) {
+            profilingActive = false;
+            activeProfileTarget = targetPosition;
+            return;
+        }
+
+        profileStartPosition = currentPos - (direction * accelerationDistance);
+        profileTimeOffset =
+                Math.min(
+                        SCurveProfile.calculateAccelerationTime(profileVelocity, maxAccel, maxJerk),
+                        Double.MAX_VALUE);
+        activeProfileTarget = targetPosition;
+        sCurveProfile.generate(maxVel, maxAccel, maxJerk, direction * totalProfileDistance);
+        profileTimeOffset = Math.min(profileTimeOffset, sCurveProfile.getTotalTime());
+        profileTimer.reset();
+        profilingActive = sCurveProfile.getTotalTime() > 0;
     }
 
     /**
@@ -162,26 +273,37 @@ public class ClosedLoopDC {
      * @param target Desired final position (encoder ticks or degrees).
      */
     public void update(double target) {
-        // Re-generate profile if the target changes while profiled mode is expected
-        if (isProfileConfigured() && (!profilingActive || Math.abs(target - lastTarget) > 1e-4)) {
-            setProfileTarget(target);
+        if (!isProfileConfigured()) {
+            profilingActive = false;
+            brakingForReprofile = false;
+            updateDirect(target, 0);
+            return;
+        }
+
+        if (!profilingActive || Math.abs(getSignedDistance(lastTarget, target)) > TARGET_EPSILON) {
+            lastTarget = target;
+            startDynamicProfile(target);
         }
 
         if (profilingActive && isProfileConfigured()) {
-            double t = profileTimer.seconds();
+            double t = profileTimer.seconds() + profileTimeOffset;
             SCurveProfile.ProfileState state = sCurveProfile.calculate(t);
 
             double currentProfileTargetPos = profileStartPosition + state.position;
             double targetVelocity = state.velocity;
 
-            updateDirect(currentProfileTargetPos, targetVelocity);
+            updateDirectInternal(currentProfileTargetPos, targetVelocity, false);
 
             if (t >= sCurveProfile.getTotalTime()) {
                 profilingActive = false;
+                if (brakingForReprofile) {
+                    brakingForReprofile = false;
+                    startDynamicProfile(lastTarget);
+                }
             }
         } else {
             // Direct PID fallback if profile is null/unconfigured or finished
-            updateDirect(target, 0);
+            updateDirectInternal(target, 0, false);
         }
     }
 
@@ -192,13 +314,23 @@ public class ClosedLoopDC {
      * @param targetVelocity Target velocity in units/sec.
      */
     public void updateDirect(double target, double targetVelocity) {
-        lastTarget = target;
+        updateDirectInternal(target, targetVelocity, true);
+    }
+
+    private void updateDirectInternal(double target, double targetVelocity, boolean updateRequestedTarget) {
+        if (updateRequestedTarget) {
+            lastTarget = target;
+            activeProfileTarget = target;
+            profilingActive = false;
+            brakingForReprofile = false;
+        }
+
         lastRawPosition = motor.getCurrentPosition();
-        lastVelocity = motor.getVelocity();
+        lastVelocity = getCurrentVelocity();
 
         if (!enabled || pid == null) {
             motor.setPower(0);
-            lastCurrent = angleMode ? lastRawPosition * 360.0 / ticksPerRev : lastRawPosition;
+            lastCurrent = ticksToUnits(lastRawPosition);
             lastPidTarget = target;
             lastPidCurrent = lastCurrent;
             lastPidOutput = 0;
@@ -212,7 +344,7 @@ public class ClosedLoopDC {
         double pidCurrent;
 
         if (angleMode) {
-            double currentAngle = currentPos * 360.0 / ticksPerRev;
+            double currentAngle = ticksToUnits(currentPos);
             pidTarget = currentAngle + wrapAngle(target - currentAngle);
             pidCurrent = currentAngle;
         } else {
@@ -299,11 +431,7 @@ public class ClosedLoopDC {
 
     /** @return Current position in ticks or degrees depending on angleMode. */
     public double getCurrentPosition() {
-        if (angleMode) {
-            return motor.getCurrentPosition() * 360.0 / ticksPerRev;
-        } else {
-            return motor.getCurrentPosition();
-        }
+        return ticksToUnits(motor.getCurrentPosition());
     }
 
     /** @return True if PID position error is within strict deadband. */
@@ -376,6 +504,9 @@ public class ClosedLoopDC {
             pid.reset();
         }
         profilingActive = false;
+        brakingForReprofile = false;
+        profileTimeOffset = 0.0;
+        activeProfileTarget = lastTarget;
         telemetryTimer.reset();
     }
 
@@ -427,6 +558,10 @@ public class ClosedLoopDC {
                 telemetry.addData(name + " PID Resets", pid.getResetCount());
                 telemetry.addData(name + " PID Tolerances", "deadband %.2f settled %.2f integral %.2f..%.2f",
                         pid.getDeadband(), pid.getSettledDeadband(), pid.getIntegralMin(), pid.getIntegralMax());
+                telemetry.addData(name + " Profile Target", "%.2f", activeProfileTarget);
+                telemetry.addData(name + " Profile Time", "%.3f / %.3f",
+                        profileTimer.seconds() + profileTimeOffset, sCurveProfile.getTotalTime());
+                telemetry.addData(name + " Reprofile Brake", brakingForReprofile);
             } else {
                 telemetry.addData(name + " PID", "null");
             }
