@@ -54,6 +54,7 @@ public class ClosedLoopDC {
     private final ElapsedTime profileTimer = new ElapsedTime();
     private boolean profilingActive = false;
     private boolean brakingForReprofile = false;
+    private boolean profileCommandInitialized = false;
     private double profileStartPosition = 0;
     private double profileTimeOffset = 0;
     private double activeProfileTarget = 0;
@@ -170,6 +171,7 @@ public class ClosedLoopDC {
         }
 
         lastTarget = targetPosition;
+        profileCommandInitialized = true;
         startDynamicProfile(targetPosition);
     }
 
@@ -280,8 +282,12 @@ public class ClosedLoopDC {
             return;
         }
 
-        if (!profilingActive || Math.abs(getSignedDistance(lastTarget, target)) > TARGET_EPSILON) {
+        boolean targetChanged =
+                !profileCommandInitialized || Math.abs(getSignedDistance(lastTarget, target)) > TARGET_EPSILON;
+
+        if (targetChanged) {
             lastTarget = target;
+            profileCommandInitialized = true;
             startDynamicProfile(target);
         }
 
@@ -321,6 +327,7 @@ public class ClosedLoopDC {
         if (updateRequestedTarget) {
             lastTarget = target;
             activeProfileTarget = target;
+            profileCommandInitialized = true;
             profilingActive = false;
             brakingForReprofile = false;
         }
@@ -505,6 +512,7 @@ public class ClosedLoopDC {
         }
         profilingActive = false;
         brakingForReprofile = false;
+        profileCommandInitialized = false;
         profileTimeOffset = 0.0;
         activeProfileTarget = lastTarget;
         telemetryTimer.reset();
