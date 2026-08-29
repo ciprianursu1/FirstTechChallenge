@@ -16,16 +16,16 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
 public class Constants {
     public static FollowerConstants followerConstants = new FollowerConstants()
-            .mass(15)
-            .forwardZeroPowerAcceleration(-35)
-            .lateralZeroPowerAcceleration(-45)
+            .mass(8)
+            .forwardZeroPowerAcceleration(-33.87)
+            .lateralZeroPowerAcceleration(-51.28)
             .translationalPIDFCoefficients(new PIDFCoefficients(
                     0.09,
                     0,
                     0.00005,
                     0.005
             ))
-            .translationalPIDFSwitch(20)
+            .translationalPIDFSwitch(10)
             .secondaryTranslationalPIDFCoefficients(new PIDFCoefficients(
                     0.06,
                     0,
@@ -58,7 +58,7 @@ public class Constants {
                     0.6,
                     0.01
             ))
-            .drivePIDFSwitch(15)
+            .drivePIDFSwitch(3)
             .centripetalScaling(0.0005);
 
     public static MecanumConstants driveConstants = new MecanumConstants()
@@ -70,14 +70,14 @@ public class Constants {
             .leftRearMotorDirection(DcMotorSimple.Direction.REVERSE)
             .rightFrontMotorDirection(DcMotorSimple.Direction.FORWARD)
             .rightRearMotorDirection(DcMotorSimple.Direction.FORWARD)
-            .xVelocity(61.722)
-            .yVelocity(57.464);
+            .xVelocity(83.93)
+            .yVelocity(75.63);
 
     public static PinpointConstants localizerConstants = new PinpointConstants()
-            .forwardPodY(-7.1356)
-            .strafePodX(-2.697)
+            .forwardPodY(3.173)
+            .strafePodX(-1.983)
             .distanceUnit(DistanceUnit.INCH)
-            .forwardEncoderDirection(GoBildaPinpointDriver.EncoderDirection.FORWARD)
+            .forwardEncoderDirection(GoBildaPinpointDriver.EncoderDirection.REVERSED)
             .strafeEncoderDirection(GoBildaPinpointDriver.EncoderDirection.REVERSED);
     /**
      These are the PathConstraints in order:

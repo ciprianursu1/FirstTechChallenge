@@ -25,12 +25,13 @@ public class PIDController {
     private double integralMax = 1.0, integralMin = -1.0;
 
     // Dual Deadbands
-    private double deadband = 1.0;        // Target position deadband (stops motor output)
+    private double deadband = 1.0;        // Target position deadband (stops feedback correction)
     private double settledDeadband = 5.0; // Acceptance deadband (allows state machine to move on)
 
     private double lastIntegralDelta = 0;
     private int resetCount = 0;
     private boolean resetIntegralOnSignChange = false;
+    private boolean holdFeedforwardInDeadband = false;
     private boolean isFirstRun = true;
 
     private final ElapsedTime timer = new ElapsedTime();
@@ -118,15 +119,21 @@ public class PIDController {
         lastDt = measuredDt;
 
         double error = targetPosition - currentPosition;
+        double targetAccel = (targetVelocity - lastTargetVelocity) / measuredDt;
+        lastTargetVelocity = targetVelocity;
 
-        // Position Deadband: Stop applying power when strictly inside the target tolerance
+        // Position Deadband: Stop feedback correction when strictly inside the target tolerance.
         if (Math.abs(error) < deadband) {
             lastIntegralDelta = -errorSum;
             errorSum = 0;
             lastError = error;
             lastMeasurement = currentPosition;
-            output = 0;
-            return 0;
+            output =
+                    holdFeedforwardInDeadband
+                            ? calculateFeedforward(targetVelocity, targetAccel, effectiveKg, 0)
+                            : 0;
+            output = Math.max(Math.min(output, 1.0), -1.0);
+            return output;
         }
 
         // Integral anti-windup on sign change
@@ -154,23 +161,32 @@ public class PIDController {
         double pidOutput = (kP * error) + (kI * errorSum) - (kD * derivative);
 
         // --- 2. Feedforward (kS, kV, kA, kG) ---
-        double targetAccel = (targetVelocity - lastTargetVelocity) / measuredDt;
-        lastTargetVelocity = targetVelocity;
-
-        double staticFriction = kS * Math.signum(targetVelocity);
-
-        // Static friction fallback when target velocity is zero
-        if (Math.abs(targetVelocity) < ZERO && Math.abs(error) > deadband) {
-            staticFriction = kS * Math.signum(error);
-        }
-
-        double ffOutput = staticFriction + (kV * targetVelocity) + (kA * targetAccel) + effectiveKg;
+        double ffOutput = calculateFeedforward(targetVelocity, targetAccel, effectiveKg, error);
 
         // Combine and bound output
         output = pidOutput + ffOutput;
         output = Math.max(Math.min(output, 1.0), -1.0);
 
         return output;
+    }
+
+    private double calculateFeedforward(
+            double targetVelocity,
+            double targetAccel,
+            double effectiveKg,
+            double error) {
+        double staticFriction = kS * Math.signum(targetVelocity);
+
+        // Static friction fallback when target velocity is zero.
+        if (Math.abs(targetVelocity) < ZERO) {
+            if (Math.abs(error) > deadband) {
+                staticFriction = kS * Math.signum(error);
+            } else {
+                staticFriction = kS * Math.signum(effectiveKg);
+            }
+        }
+
+        return staticFriction + (kV * targetVelocity) + (kA * targetAccel) + effectiveKg;
     }
 
     /**
@@ -210,6 +226,16 @@ public class PIDController {
      */
     public void setResetIntegralOnSignChange(boolean reset) {
         this.resetIntegralOnSignChange = reset;
+    }
+
+    /**
+     * Keeps kS/kV/kA/kG feedforward active after position error enters the deadband.
+     * Useful for gravity-loaded arms/elevators that still need hold power at target.
+     *
+     * @param hold True to output feedforward in the deadband, false to output zero.
+     */
+    public void setHoldFeedforwardInDeadband(boolean hold) {
+        this.holdFeedforwardInDeadband = hold;
     }
 
     /**
@@ -322,6 +348,9 @@ public class PIDController {
 
     /** @return True if integral sum resets on sign change. */
     public boolean getResetIntegralOnSignChange() { return resetIntegralOnSignChange; }
+
+    /** @return True if feedforward remains active inside the position deadband. */
+    public boolean getHoldFeedforwardInDeadband() { return holdFeedforwardInDeadband; }
 
     /** @return Upper limit of integral error sum. */
     public double getIntegralMax() { return integralMax; }

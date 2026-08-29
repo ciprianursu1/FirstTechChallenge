@@ -22,16 +22,16 @@ public class PositionRingBuffer {
      */
     public static class PositionData {
         /** The 2D pose (X, Y, Heading) of the robot on the field. */
-        public final Pose pose;
+        public Pose pose;
 
-        /** System timestamp in nanoseconds (obtained via {@link System#nanoTime()}). */
-        public final long timestamp;
+        /** System timestamp in milliseconds (obtained via {@link System#currentTimeMillis()}). */
+        public long timestamp;
 
         /**
          * Constructs a timestamped position record.
          *
          * @param pose      The {@link Pose} object representing robot field coordinates.
-         * @param timestamp Epoch execution timestamp in nanoseconds.
+         * @param timestamp Epoch timestamp in milliseconds.
          */
         public PositionData(Pose pose, long timestamp) {
             this.pose = pose;
@@ -61,13 +61,13 @@ public class PositionRingBuffer {
     }
 
     /**
-     * Inserts a new pose into the buffer, tagging it automatically with the current system time in nanoseconds.
+     * Inserts a new pose into the buffer, tagging it automatically with the current system time in milliseconds.
      * Overwrites the oldest recorded entry once capacity is reached.
      *
      * @param pose The current live {@link Pose} of the drivetrain or odometry estimator.
      */
     public void update(Pose pose) {
-        buffer[bufferIndex] = new PositionData(pose, System.nanoTime());
+        buffer[bufferIndex] = new PositionData(pose, System.currentTimeMillis());
         bufferIndex = (bufferIndex + 1) % bufferSize;
     }
 
@@ -83,23 +83,19 @@ public class PositionRingBuffer {
 
     /**
      * Queries the buffer and returns the single discrete historical pose whose timestamp
-     * the closest matches the requested camera latency offset.
+     * most closely matches the requested timestamp.
      *
-     * @param latencyMs Camera processing and transmission latency in milliseconds (e.g., 45.0).
+     * @param timestampMs Target timestamp in milliseconds.
      * @return The closest {@link PositionData} entry recorded at that point in time, or {@code null} if buffer is empty.
      */
-    public PositionData getClosestPose(double latencyMs) {
-        // Convert millisecond latency directly to nanoseconds (1 ms = 1,000,000 ns)
-        long latencyNs = (long) (latencyMs * 1e6);
-        long requestedTimestamp = System.nanoTime() - latencyNs;
-
+    public PositionData getClosestPose(long timestampMs) {
         PositionData closest = null;
         long minDiff = Long.MAX_VALUE;
 
         for (int i = 0; i < bufferSize; i++) {
             if (buffer[i] == null) continue;
 
-            long diff = Math.abs(buffer[i].timestamp - requestedTimestamp);
+            long diff = Math.abs(buffer[i].timestamp - timestampMs);
             if (diff < minDiff) {
                 minDiff = diff;
                 closest = buffer[i];
@@ -110,20 +106,17 @@ public class PositionRingBuffer {
 
     /**
      * Performs linear interpolation (LERP) between the two closest recorded pose entries surrounding
-     * the target latency timestamp.
+     * the target timestamp.
      * <p>
-     * Recommended over {@link #getClosestPose(double)} when running loop rates under 100Hz to eliminate
+     * Recommended over {@link #getClosestPose(long)} when running loop rates under 100Hz to eliminate
      * quantization jitter in historical position reconstruction.
      * </p>
      *
-     * @param latencyMs Camera processing and transmission latency in milliseconds (e.g., 45.0).
+     * @param timestampMs Target timestamp in milliseconds.
      * @return A smooth interpolated {@link Pose} calculated at the requested historical moment,
      * or {@code null} if insufficient history exists.
      */
-    public Pose getInterpolatedPose(double latencyMs) {
-        long latencyNs = (long) (latencyMs * 1e6);
-        long targetTime = System.nanoTime() - latencyNs;
-
+    public Pose getInterpolatedPose(long timestampMs) {
         PositionData before = null;
         PositionData after = null;
 
@@ -131,12 +124,12 @@ public class PositionRingBuffer {
             PositionData data = buffer[i];
             if (data == null) continue;
 
-            if (data.timestamp <= targetTime) {
+            if (data.timestamp <= timestampMs) {
                 if (before == null || data.timestamp > before.timestamp) {
                     before = data;
                 }
             }
-            if (data.timestamp >= targetTime) {
+            if (data.timestamp >= timestampMs) {
                 if (after == null || data.timestamp < after.timestamp) {
                     after = data;
                 }
@@ -150,7 +143,7 @@ public class PositionRingBuffer {
         if (before.timestamp == after.timestamp) return before.pose;
 
         // Compute interpolation ratio alpha inside interval [0.0, 1.0]
-        double alpha = (double) (targetTime - before.timestamp) / (after.timestamp - before.timestamp);
+        double alpha = (double) (timestampMs - before.timestamp) / (after.timestamp - before.timestamp);
 
         // Linear interpolation across spatial axes and rotation
         double x = before.pose.getX() + alpha * (after.pose.getX() - before.pose.getX());

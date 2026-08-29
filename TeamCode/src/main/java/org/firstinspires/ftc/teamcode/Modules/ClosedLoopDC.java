@@ -48,6 +48,9 @@ public class ClosedLoopDC {
     private boolean enabled = true;
     private boolean angleMode = false;
     private final double ticksPerRev;
+    private boolean cosineGravityEnabled = false;
+    private double gravityHorizontalTicks = 0.0;
+    private double gravityPowerSign = 1.0;
 
     // S-Curve Motion Profiling
     private final SCurveProfile sCurveProfile;
@@ -75,6 +78,7 @@ public class ClosedLoopDC {
     private double lastPidTarget = 0;
     private double lastPidCurrent = 0;
     private double lastPidOutput = 0;
+    private double lastEffectiveKg = 0;
     private double lastPower = 0;
     private double lastRawPosition = 0;
     private double lastVelocity = 0;
@@ -114,6 +118,23 @@ public class ClosedLoopDC {
             return ticks * 360.0 / ticksPerRev;
         }
         return ticks;
+    }
+
+    private double getArmAngleRadians(double encoderTicks) {
+        if (Math.abs(ticksPerRev) <= VELOCITY_EPSILON) {
+            return 0.0;
+        }
+        return ((encoderTicks - gravityHorizontalTicks) / ticksPerRev) * 2.0 * Math.PI;
+    }
+
+    private double getEffectiveGravityFeedforward(double encoderTicks) {
+        if (pid == null) {
+            return 0.0;
+        }
+        if (!cosineGravityEnabled) {
+            return pid.getkG();
+        }
+        return pid.getkG() * gravityPowerSign * Math.cos(getArmAngleRadians(encoderTicks));
     }
 
     /**
@@ -359,7 +380,9 @@ public class ClosedLoopDC {
             pidCurrent = currentPos;
         }
 
-        double power = pid.update(pidTarget, pidCurrent, targetVelocity);
+        lastEffectiveKg = getEffectiveGravityFeedforward(lastRawPosition);
+
+        double power = pid.update(pidTarget, pidCurrent, targetVelocity, lastEffectiveKg);
         lastPidOutput = power;
 
         // Clamp output power
@@ -405,6 +428,46 @@ public class ClosedLoopDC {
     }
 
     /**
+     * Enables arm-style gravity feedforward using kG * cos(theta).
+     *
+     * @param horizontalTicks Encoder ticks where the arm is horizontal.
+     * @param gravityPowerSign Sign of positive gravity compensation power.
+     */
+    public void enableCosineGravityFeedforward(double horizontalTicks, double gravityPowerSign) {
+        this.cosineGravityEnabled = true;
+        this.gravityHorizontalTicks = horizontalTicks;
+        this.gravityPowerSign = Math.signum(gravityPowerSign);
+        if (this.gravityPowerSign == 0) {
+            this.gravityPowerSign = 1.0;
+        }
+    }
+
+    /** Disables dynamic cosine gravity and returns to constant PIDController kG. */
+    public void disableCosineGravityFeedforward() {
+        this.cosineGravityEnabled = false;
+    }
+
+    /** @return True if kG is scaled by cos(theta). */
+    public boolean isCosineGravityEnabled() {
+        return cosineGravityEnabled;
+    }
+
+    /** @return Encoder ticks where the arm is horizontal. */
+    public double getGravityHorizontalTicks() {
+        return gravityHorizontalTicks;
+    }
+
+    /** @return Sign applied to cosine gravity feedforward. */
+    public double getGravityPowerSign() {
+        return gravityPowerSign;
+    }
+
+    /** @return Last gravity feedforward value passed into PIDController. */
+    public double getLastEffectiveKg() {
+        return lastEffectiveKg;
+    }
+
+    /**
      * Sets telemetry verbosity level.
      *
      * @param verbosity Desired TelemetryVerbosity level.
@@ -439,6 +502,21 @@ public class ClosedLoopDC {
     /** @return Current position in ticks or degrees depending on angleMode. */
     public double getCurrentPosition() {
         return ticksToUnits(motor.getCurrentPosition());
+    }
+
+    /** @return Last sampled current position in ticks/degrees. */
+    public double getLastCurrent() {
+        return lastCurrent;
+    }
+
+    /** @return Last raw encoder position in ticks. */
+    public double getLastRawPosition() {
+        return lastRawPosition;
+    }
+
+    /** @return Last sampled mechanism velocity in ticks/sec or deg/sec. */
+    public double getLastVelocity() {
+        return lastVelocity;
     }
 
     /** @return True if PID position error is within strict deadband. */
@@ -478,6 +556,51 @@ public class ClosedLoopDC {
     /** @return Last unwrapped target passed to internal PID. */
     public double getLastPidTarget() {
         return lastPidTarget;
+    }
+
+    /** @return Last current value passed to internal PID. */
+    public double getLastPidCurrent() {
+        return lastPidCurrent;
+    }
+
+    /** @return Last unclamped PIDF output. */
+    public double getLastPidOutput() {
+        return lastPidOutput;
+    }
+
+    /** @return Last clamped motor power command. */
+    public double getLastPower() {
+        return lastPower;
+    }
+
+    /** @return Current max output power limit. */
+    public double getMaxPower() {
+        return maxPower;
+    }
+
+    /** @return Current active profile target. */
+    public double getActiveProfileTarget() {
+        return activeProfileTarget;
+    }
+
+    /** @return Current profile elapsed time including any dynamic reprofile offset. */
+    public double getProfileTime() {
+        return profileTimer.seconds() + profileTimeOffset;
+    }
+
+    /** @return Total time of the active/generated S-curve profile. */
+    public double getProfileTotalTime() {
+        return sCurveProfile.getTotalTime();
+    }
+
+    /** @return True if currently braking before generating a new dynamic profile. */
+    public boolean isBrakingForReprofile() {
+        return brakingForReprofile;
+    }
+
+    /** @return Arm gravity angle in degrees from the configured horizontal tick position. */
+    public double getGravityAngleDegrees() {
+        return Math.toDegrees(getArmAngleRadians(lastRawPosition));
     }
 
     /**
@@ -542,6 +665,8 @@ public class ClosedLoopDC {
         if (level >= 2) {
             telemetry.addData(name + " Enabled", enabled);
             telemetry.addData(name + " Angle Mode", angleMode);
+            telemetry.addData(name + " Cosine kG", cosineGravityEnabled);
+            telemetry.addData(name + " Effective kG", "%.4f", lastEffectiveKg);
             telemetry.addData(name + " Raw Pos", "%.0f ticks", lastRawPosition);
             telemetry.addData(name + " Velocity", "%.2f units/s", lastVelocity);
             telemetry.addData(name + " Current", "%.2f A", motor.getCurrent(CurrentUnit.AMPS));
@@ -570,6 +695,9 @@ public class ClosedLoopDC {
                 telemetry.addData(name + " Profile Time", "%.3f / %.3f",
                         profileTimer.seconds() + profileTimeOffset, sCurveProfile.getTotalTime());
                 telemetry.addData(name + " Reprofile Brake", brakingForReprofile);
+                telemetry.addData(name + " Gravity Angle", "%.2f deg",
+                        Math.toDegrees(getArmAngleRadians(lastRawPosition)));
+                telemetry.addData(name + " Horizontal Ticks", "%.1f", gravityHorizontalTicks);
             } else {
                 telemetry.addData(name + " PID", "null");
             }
