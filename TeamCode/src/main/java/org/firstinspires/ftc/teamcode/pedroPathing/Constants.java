@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.pedroPathing;
 
 import com.pedropathing.control.PIDFCoefficients;
 import com.pedropathing.control.FilteredPIDFCoefficients;
+import com.pedropathing.control.PredictiveBrakingCoefficients;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.follower.FollowerConstants;
 import com.pedropathing.ftc.FollowerBuilder;
@@ -16,9 +17,9 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
 public class Constants {
     public static FollowerConstants followerConstants = new FollowerConstants()
-            .mass(8)
-            .forwardZeroPowerAcceleration(-33.87)
-            .lateralZeroPowerAcceleration(-51.28)
+            .mass(12)
+            .forwardZeroPowerAcceleration(-35.0)
+            .lateralZeroPowerAcceleration(-64.0)
             .translationalPIDFCoefficients(new PIDFCoefficients(
                     0.09,
                     0,
@@ -59,7 +60,12 @@ public class Constants {
                     0.01
             ))
             .drivePIDFSwitch(3)
-            .centripetalScaling(0.0005);
+            .predictiveBrakingCoefficients(new PredictiveBrakingCoefficients(
+                    0.10,
+                    0.0476,
+                    0.001921838
+            ))
+            .centripetalScaling(0);
 
     public static MecanumConstants driveConstants = new MecanumConstants()
             .leftFrontMotorName("lf")
@@ -70,12 +76,12 @@ public class Constants {
             .leftRearMotorDirection(DcMotorSimple.Direction.REVERSE)
             .rightFrontMotorDirection(DcMotorSimple.Direction.FORWARD)
             .rightRearMotorDirection(DcMotorSimple.Direction.FORWARD)
-            .xVelocity(83.93)
-            .yVelocity(75.63);
+            .xVelocity(73.21)
+            .yVelocity(64.46);
 
     public static PinpointConstants localizerConstants = new PinpointConstants()
-            .forwardPodY(3.173)
-            .strafePodX(-1.983)
+            .forwardPodY(3.622)
+            .strafePodX(-1.78)
             .distanceUnit(DistanceUnit.INCH)
             .forwardEncoderDirection(GoBildaPinpointDriver.EncoderDirection.REVERSED)
             .strafeEncoderDirection(GoBildaPinpointDriver.EncoderDirection.REVERSED);

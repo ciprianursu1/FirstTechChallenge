@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.Modules;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
@@ -54,6 +55,18 @@ public class SafeDcMotor {
      */
     public SafeDcMotor(HardwareMap hardwareMap, String deviceName) {
         this.motor = hardwareMap.get(DcMotorEx.class, deviceName);
+
+        // Attempt to retrieve primary VoltageSensor
+        if(hardwareMap.voltageSensor.iterator().hasNext())
+            this.voltageSensor = hardwareMap.voltageSensor.iterator().next();
+        else
+            this.voltageSensor = null;
+    }
+    public SafeDcMotor(HardwareMap hardwareMap, String deviceName,boolean reversed) {
+        this.motor = hardwareMap.get(DcMotorEx.class, deviceName);
+        if(reversed){
+            motor.setDirection(DcMotorSimple.Direction.REVERSE);
+        }
 
         // Attempt to retrieve primary VoltageSensor
         if(hardwareMap.voltageSensor.iterator().hasNext())

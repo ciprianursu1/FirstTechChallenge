@@ -47,7 +47,14 @@ public class ClosedLoopDC {
     private double maxPower;
     private boolean enabled = true;
     private boolean angleMode = false;
+    private boolean angleWrappingEnabled = true;
     private final double ticksPerRev;
+    private boolean angleLimitsEnabled = false;
+    private boolean largeArcAngleLimit = false;
+    private double angleLimitA = -180.0;
+    private double angleLimitB = 180.0;
+    private double angleLimitArcStart = -180.0;
+    private double angleLimitArcLength = 360.0;
     private boolean cosineGravityEnabled = false;
     private double gravityHorizontalTicks = 0.0;
     private double gravityPowerSign = 1.0;
@@ -71,6 +78,7 @@ public class ClosedLoopDC {
     private TelemetryVerbosity verbosity = TelemetryVerbosity.STANDARD;
     private double telemetryIntervalSeconds = 0.05; // 20 Hz default rate limit
     private final ElapsedTime telemetryTimer = new ElapsedTime();
+    private boolean telemetrySnapshotInitialized = false;
 
     // Telemetry and state tracking variables
     private double lastTarget = 0;
@@ -79,9 +87,12 @@ public class ClosedLoopDC {
     private double lastPidCurrent = 0;
     private double lastPidOutput = 0;
     private double lastEffectiveKg = 0;
+    private double lastLimitedTarget = 0;
     private double lastPower = 0;
     private double lastRawPosition = 0;
     private double lastVelocity = 0;
+    private double lastTelemetryCurrentAmps = 0;
+    private boolean lastTelemetryOverCurrent = false;
 
     /**
      * Helper method to wrap angles within the range [-180, 180) degrees.
@@ -97,9 +108,99 @@ public class ClosedLoopDC {
         return angle - 180;
     }
 
+    private double normalizeLimitAngle(double angle) {
+        if (!Double.isFinite(angle)) {
+            return 0.0;
+        }
+        double normalized = wrapAngle(angle);
+        return normalized <= -180.0 ? 180.0 : normalized;
+    }
+
+    private double getPositiveAngleDistance(double from, double to) {
+        double distance = normalizeLimitAngle(to) - normalizeLimitAngle(from);
+        distance %= 360.0;
+        if (distance < 0) {
+            distance += 360.0;
+        }
+        return distance;
+    }
+
+    private double getAngleLimitArcEnd() {
+        return normalizeLimitAngle(angleLimitArcStart + angleLimitArcLength);
+    }
+
+    private boolean isFullAngleLimitArc() {
+        return angleLimitArcLength >= 360.0 - TARGET_EPSILON;
+    }
+
+    private void updateAngleLimitArc() {
+        angleLimitA = normalizeLimitAngle(angleLimitA);
+        angleLimitB = normalizeLimitAngle(angleLimitB);
+
+        double forwardDistance = getPositiveAngleDistance(angleLimitA, angleLimitB);
+        boolean firstToSecondIsSmallArc = forwardDistance <= 180.0;
+        double smallArcStart = firstToSecondIsSmallArc ? angleLimitA : angleLimitB;
+        double smallArcLength = firstToSecondIsSmallArc ? forwardDistance : 360.0 - forwardDistance;
+
+        if (largeArcAngleLimit) {
+            angleLimitArcStart = normalizeLimitAngle(smallArcStart + smallArcLength);
+            angleLimitArcLength = 360.0 - smallArcLength;
+        } else {
+            angleLimitArcStart = smallArcStart;
+            angleLimitArcLength = smallArcLength;
+        }
+    }
+
+    private boolean isAngleWithinLimits(double angle) {
+        if (!angleLimitsEnabled || isFullAngleLimitArc()) {
+            return true;
+        }
+        return getPositiveAngleDistance(angleLimitArcStart, angle) <= angleLimitArcLength + TARGET_EPSILON;
+    }
+
+    private double clampAngleToLimits(double angle) {
+        double normalized = normalizeLimitAngle(angle);
+        if (!angleLimitsEnabled || isFullAngleLimitArc() || isAngleWithinLimits(normalized)) {
+            return normalized;
+        }
+
+        double arcEnd = getAngleLimitArcEnd();
+        double distanceToStart = Math.abs(wrapAngle(normalized - angleLimitArcStart));
+        double distanceToEnd = Math.abs(wrapAngle(normalized - arcEnd));
+        return distanceToStart <= distanceToEnd ? angleLimitArcStart : arcEnd;
+    }
+
+    private double limitTarget(double target) {
+        if (!Double.isFinite(target)) {
+            return lastTarget;
+        }
+        if (angleMode && angleWrappingEnabled && angleLimitsEnabled) {
+            lastLimitedTarget = clampAngleToLimits(target);
+            return lastLimitedTarget;
+        }
+        lastLimitedTarget = target;
+        return target;
+    }
+
     private double getSignedDistance(double from, double to) {
-        double distance = to - from;
-        return angleMode ? wrapAngle(distance) : distance;
+        if (!angleMode) {
+            return to - from;
+        }
+        if (!angleWrappingEnabled) {
+            return to - from;
+        }
+        if (!angleLimitsEnabled || isFullAngleLimitArc()) {
+            return wrapAngle(to - from);
+        }
+
+        double currentAngle = normalizeLimitAngle(from);
+        double targetAngle = clampAngleToLimits(to);
+        if (!isAngleWithinLimits(currentAngle)) {
+            return wrapAngle(targetAngle - currentAngle);
+        }
+
+        return getPositiveAngleDistance(angleLimitArcStart, targetAngle)
+                - getPositiveAngleDistance(angleLimitArcStart, currentAngle);
     }
 
     private double getCurrentVelocity() {
@@ -184,6 +285,7 @@ public class ClosedLoopDC {
      * @param targetPosition Desired target position (ticks or degrees).
      */
     public void setProfileTarget(double targetPosition) {
+        targetPosition = limitTarget(targetPosition);
         if (!isProfileConfigured()) {
             // Fallback: If unconfigured or null profile, drive direct PID
             profilingActive = false;
@@ -296,6 +398,7 @@ public class ClosedLoopDC {
      * @param target Desired final position (encoder ticks or degrees).
      */
     public void update(double target) {
+        target = limitTarget(target);
         if (!isProfileConfigured()) {
             profilingActive = false;
             brakingForReprofile = false;
@@ -341,6 +444,7 @@ public class ClosedLoopDC {
      * @param targetVelocity Target velocity in units/sec.
      */
     public void updateDirect(double target, double targetVelocity) {
+        target = limitTarget(target);
         updateDirectInternal(target, targetVelocity, true);
     }
 
@@ -373,7 +477,7 @@ public class ClosedLoopDC {
 
         if (angleMode) {
             double currentAngle = ticksToUnits(currentPos);
-            pidTarget = currentAngle + wrapAngle(target - currentAngle);
+            pidTarget = currentAngle + getSignedDistance(currentAngle, target);
             pidCurrent = currentAngle;
         } else {
             pidTarget = target;
@@ -468,6 +572,17 @@ public class ClosedLoopDC {
     }
 
     /**
+     * Sets the PIDController gravity feedforward value used when cosine gravity is disabled.
+     *
+     * @param gravityFeedforward Gravity feedforward motor power for this update.
+     */
+    public void setGravityFeedforward(double gravityFeedforward) {
+        if (pid != null && Double.isFinite(gravityFeedforward)) {
+            pid.setkG(gravityFeedforward);
+        }
+    }
+
+    /**
      * Sets telemetry verbosity level.
      *
      * @param verbosity Desired TelemetryVerbosity level.
@@ -533,7 +648,7 @@ public class ClosedLoopDC {
     public double getTargetError() {
         double current = getCurrentPosition();
         if (angleMode) {
-            return wrapAngle(lastTarget - current);
+            return getSignedDistance(current, lastTarget);
         }
         return lastTarget - current;
     }
@@ -609,10 +724,130 @@ public class ClosedLoopDC {
      * @param angleMode True for continuous angle in degrees.
      */
     public void setAngleMode(boolean angleMode) {
-        if (this.angleMode != angleMode) {
-            this.angleMode = angleMode;
+        setAngleMode(angleMode, true);
+    }
+
+    /**
+     * Enables angle mode and selects whether angle targets should wrap through (-180, 180).
+     *
+     * @param wrapAngles True for shortest-path wrapped angles, false for continuous multi-turn degrees.
+     */
+    public void setAngleMode(boolean angleMode, boolean wrapAngles) {
+        boolean changed = this.angleMode != angleMode || this.angleWrappingEnabled != wrapAngles;
+        this.angleMode = angleMode;
+        this.angleWrappingEnabled = wrapAngles;
+        if (!wrapAngles) {
+            angleLimitsEnabled = false;
+        }
+        if (changed) {
             reset();
         }
+    }
+
+    /** Enables degree units with shortest-path wrapping. */
+    public void enableWrappedAngleMode() {
+        setAngleMode(true, true);
+    }
+
+    /** Enables degree units without wrapping, useful for elevators or multi-turn joints. */
+    public void enableNonWrappedAngleMode() {
+        setAngleMode(true, false);
+    }
+
+    /**
+     * Enables or disables shortest-path angle wrapping while keeping angle mode state unchanged.
+     *
+     * @param enabled True to wrap angle errors, false to use continuous degree error.
+     */
+    public void setAngleWrappingEnabled(boolean enabled) {
+        if (angleWrappingEnabled != enabled) {
+            angleWrappingEnabled = enabled;
+            if (!enabled) {
+                angleLimitsEnabled = false;
+            }
+            reset();
+        }
+    }
+
+    /** @return True if angle mode uses shortest-path wrapping. */
+    public boolean isAngleWrappingEnabled() {
+        return angleWrappingEnabled;
+    }
+
+    /**
+     * Enables angular travel limits using either the smaller or larger arc between two endpoints.
+     *
+     * @param firstLimitDegrees First endpoint, normalized internally to (-180, 180].
+     * @param secondLimitDegrees Second endpoint, normalized internally to (-180, 180].
+     * @param useLargeArc True to allow the larger arc between endpoints, false for the smaller arc.
+     */
+    public void setAngleLimits(double firstLimitDegrees, double secondLimitDegrees, boolean useLargeArc) {
+        if (!angleWrappingEnabled) {
+            angleLimitsEnabled = false;
+            return;
+        }
+        angleLimitsEnabled = true;
+        largeArcAngleLimit = useLargeArc;
+        angleLimitA = firstLimitDegrees;
+        angleLimitB = secondLimitDegrees;
+        updateAngleLimitArc();
+        lastTarget = limitTarget(lastTarget);
+        activeProfileTarget = limitTarget(activeProfileTarget);
+    }
+
+    /** Enables limits on the smaller arc between the two endpoint angles. */
+    public void enableSmallArcAngleLimits(double firstLimitDegrees, double secondLimitDegrees) {
+        setAngleLimits(firstLimitDegrees, secondLimitDegrees, false);
+    }
+
+    /** Enables limits on the larger arc between the two endpoint angles. */
+    public void enableLargeArcAngleLimits(double firstLimitDegrees, double secondLimitDegrees) {
+        setAngleLimits(firstLimitDegrees, secondLimitDegrees, true);
+    }
+
+    /** Disables angular travel limits. */
+    public void disableAngleLimits() {
+        angleLimitsEnabled = false;
+    }
+
+    /** @return True if angle targets are clamped to configured arc limits. */
+    public boolean areAngleLimitsEnabled() {
+        return angleLimitsEnabled;
+    }
+
+    /** @return True if configured angle limits use the larger arc between endpoints. */
+    public boolean isLargeArcAngleLimit() {
+        return largeArcAngleLimit;
+    }
+
+    /** @return First configured angle limit endpoint in degrees, normalized to (-180, 180]. */
+    public double getAngleLimitA() {
+        return angleLimitA;
+    }
+
+    /** @return Second configured angle limit endpoint in degrees, normalized to (-180, 180]. */
+    public double getAngleLimitB() {
+        return angleLimitB;
+    }
+
+    /** @return Start of the currently allowed limit arc in degrees. */
+    public double getAngleLimitArcStart() {
+        return angleLimitArcStart;
+    }
+
+    /** @return End of the currently allowed limit arc in degrees. */
+    public double getAngleLimitArcEndDegrees() {
+        return getAngleLimitArcEnd();
+    }
+
+    /** @return Length of the currently allowed limit arc in degrees. */
+    public double getAngleLimitArcLength() {
+        return angleLimitArcLength;
+    }
+
+    /** @return Last target after angular limit clamping. */
+    public double getLastLimitedTarget() {
+        return lastLimitedTarget;
     }
 
     /** Enables or disables motor power output. */
@@ -639,6 +874,7 @@ public class ClosedLoopDC {
         profileTimeOffset = 0.0;
         activeProfileTarget = lastTarget;
         telemetryTimer.reset();
+        telemetrySnapshotInitialized = false;
     }
 
     /** Replaces current PIDController instance. */
@@ -649,8 +885,13 @@ public class ClosedLoopDC {
     /** Appends diagnostic output to telemetry based on rate limits and verbosity settings. */
     public void appendTelemetry(Telemetry telemetry, String name) {
         if (verbosity == TelemetryVerbosity.DISABLED) return;
-        if (telemetryTimer.seconds() < telemetryIntervalSeconds) return;
-        telemetryTimer.reset();
+
+        if (!telemetrySnapshotInitialized || telemetryTimer.seconds() >= telemetryIntervalSeconds) {
+            telemetrySnapshotInitialized = true;
+            telemetryTimer.reset();
+            lastTelemetryCurrentAmps = motor.getCurrent(CurrentUnit.AMPS);
+            lastTelemetryOverCurrent = motor.isOverCurrent();
+        }
 
         int level = verbosity.getLevel();
         telemetry.addLine("  " + name);
@@ -665,12 +906,14 @@ public class ClosedLoopDC {
         if (level >= 2) {
             telemetry.addData(name + " Enabled", enabled);
             telemetry.addData(name + " Angle Mode", angleMode);
+            telemetry.addData(name + " Angle Wrap", angleWrappingEnabled);
+            telemetry.addData(name + " Angle Limits", "%b largeArc %b", angleLimitsEnabled, largeArcAngleLimit);
             telemetry.addData(name + " Cosine kG", cosineGravityEnabled);
             telemetry.addData(name + " Effective kG", "%.4f", lastEffectiveKg);
             telemetry.addData(name + " Raw Pos", "%.0f ticks", lastRawPosition);
             telemetry.addData(name + " Velocity", "%.2f units/s", lastVelocity);
-            telemetry.addData(name + " Current", "%.2f A", motor.getCurrent(CurrentUnit.AMPS));
-            telemetry.addData(name + " Over Current", motor.isOverCurrent());
+            telemetry.addData(name + " Current", "%.2f A", lastTelemetryCurrentAmps);
+            telemetry.addData(name + " Over Current", lastTelemetryOverCurrent);
 
             if (pid != null) {
                 telemetry.addData(name + " PID Gains", "P %.4f I %.4f D %.4f", pid.getkP(), pid.getkI(), pid.getkD());
@@ -698,6 +941,10 @@ public class ClosedLoopDC {
                 telemetry.addData(name + " Gravity Angle", "%.2f deg",
                         Math.toDegrees(getArmAngleRadians(lastRawPosition)));
                 telemetry.addData(name + " Horizontal Ticks", "%.1f", gravityHorizontalTicks);
+                telemetry.addData(name + " Limited Target", "%.2f", lastLimitedTarget);
+                telemetry.addData(name + " Angle Limit Endpoints", "%.1f / %.1f", angleLimitA, angleLimitB);
+                telemetry.addData(name + " Angle Limit Arc", "%.1f -> %.1f len %.1f",
+                        angleLimitArcStart, getAngleLimitArcEnd(), angleLimitArcLength);
             } else {
                 telemetry.addData(name + " PID", "null");
             }

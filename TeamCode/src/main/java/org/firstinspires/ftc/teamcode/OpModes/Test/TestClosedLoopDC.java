@@ -45,6 +45,8 @@ public class TestClosedLoopDC extends OpMode {
         motor = new ClosedLoopDC(safeMotor, pid, ModuleTestParameters.maxPower, ModuleTestParameters.ticksPerRev);
         motor.setTelemetryVerbosity(ClosedLoopDC.TelemetryVerbosity.DEBUG);
         motor.init(ModuleTestParameters.resetEncoderOnInit);
+        motor.setAngleMode(ModuleTestParameters.angleMode, ModuleTestParameters.angleWrapping);
+        updateAngleLimits();
         updateGravityMode();
         telemetryM = PanelsTelemetry.INSTANCE.getTelemetry();
         targetPosition = ModuleTestParameters.targetPosition;
@@ -66,7 +68,8 @@ public class TestClosedLoopDC extends OpMode {
         pid.setHoldFeedforwardInDeadband(ModuleTestParameters.holdFeedforwardInDeadband);
 
         motor.setMaxPower(ModuleTestParameters.maxPower);
-        motor.setAngleMode(ModuleTestParameters.angleMode);
+        motor.setAngleMode(ModuleTestParameters.angleMode, ModuleTestParameters.angleWrapping);
+        updateAngleLimits();
         updateGravityMode();
         motor.setSCurveConstraints(
                 ModuleTestParameters.maxVel,
@@ -120,9 +123,18 @@ public class TestClosedLoopDC extends OpMode {
         ClosedLoopDCTelemetry.profileTotalTimeSeconds = motor.getProfileTotalTime();
         ClosedLoopDCTelemetry.gravityAngleDegrees = motor.getGravityAngleDegrees();
         ClosedLoopDCTelemetry.horizontalTicks = motor.getGravityHorizontalTicks();
+        ClosedLoopDCTelemetry.limitedTarget = motor.getLastLimitedTarget();
+        ClosedLoopDCTelemetry.angleLimitA = motor.getAngleLimitA();
+        ClosedLoopDCTelemetry.angleLimitB = motor.getAngleLimitB();
+        ClosedLoopDCTelemetry.angleLimitArcStart = motor.getAngleLimitArcStart();
+        ClosedLoopDCTelemetry.angleLimitArcEnd = motor.getAngleLimitArcEndDegrees();
+        ClosedLoopDCTelemetry.angleLimitArcLength = motor.getAngleLimitArcLength();
 
         ClosedLoopDCTelemetry.enabled = motor.isEnabled();
         ClosedLoopDCTelemetry.angleMode = ModuleTestParameters.angleMode;
+        ClosedLoopDCTelemetry.angleWrapping = motor.isAngleWrappingEnabled();
+        ClosedLoopDCTelemetry.angleLimits = motor.areAngleLimitsEnabled();
+        ClosedLoopDCTelemetry.largeArcAngleLimit = motor.isLargeArcAngleLimit();
         ClosedLoopDCTelemetry.cosineGravity = motor.isCosineGravityEnabled();
         ClosedLoopDCTelemetry.holdFeedforwardInDeadband = pid.getHoldFeedforwardInDeadband();
         ClosedLoopDCTelemetry.profileConfigured = motor.isProfileConfigured();
@@ -170,8 +182,17 @@ public class TestClosedLoopDC extends OpMode {
         telemetryM.addData("CLDC Profile Total", ClosedLoopDCTelemetry.profileTotalTimeSeconds);
         telemetryM.addData("CLDC Gravity Angle", ClosedLoopDCTelemetry.gravityAngleDegrees);
         telemetryM.addData("CLDC Horizontal Ticks", ClosedLoopDCTelemetry.horizontalTicks);
+        telemetryM.addData("CLDC Limited Target", ClosedLoopDCTelemetry.limitedTarget);
+        telemetryM.addData("CLDC Angle Limit A", ClosedLoopDCTelemetry.angleLimitA);
+        telemetryM.addData("CLDC Angle Limit B", ClosedLoopDCTelemetry.angleLimitB);
+        telemetryM.addData("CLDC Limit Arc Start", ClosedLoopDCTelemetry.angleLimitArcStart);
+        telemetryM.addData("CLDC Limit Arc End", ClosedLoopDCTelemetry.angleLimitArcEnd);
+        telemetryM.addData("CLDC Limit Arc Length", ClosedLoopDCTelemetry.angleLimitArcLength);
         telemetryM.addData("CLDC Enabled", ClosedLoopDCTelemetry.enabled);
         telemetryM.addData("CLDC Angle Mode", ClosedLoopDCTelemetry.angleMode);
+        telemetryM.addData("CLDC Angle Wrap", ClosedLoopDCTelemetry.angleWrapping);
+        telemetryM.addData("CLDC Angle Limits", ClosedLoopDCTelemetry.angleLimits);
+        telemetryM.addData("CLDC Large Arc Limit", ClosedLoopDCTelemetry.largeArcAngleLimit);
         telemetryM.addData("CLDC Cosine Gravity", ClosedLoopDCTelemetry.cosineGravity);
         telemetryM.addData("CLDC Hold FF Deadband", ClosedLoopDCTelemetry.holdFeedforwardInDeadband);
         telemetryM.addData("CLDC Profile Configured", ClosedLoopDCTelemetry.profileConfigured);
@@ -191,10 +212,25 @@ public class TestClosedLoopDC extends OpMode {
         telemetry.addData("Dashboard Target", "%.1f", ModuleTestParameters.targetPosition);
         telemetry.addData("Active Target", "%.1f", targetPosition);
         telemetry.addData("Configured Profile", motor.isProfileConfigured());
+        telemetry.addData("Angle Wrap", motor.isAngleWrappingEnabled());
+        telemetry.addData("Angle Limits", "%b | Large Arc: %b",
+                motor.areAngleLimitsEnabled(), motor.isLargeArcAngleLimit());
+        telemetry.addData("Limited Target", "%.1f", motor.getLastLimitedTarget());
         telemetry.addData("Cosine Gravity", motor.isCosineGravityEnabled());
         telemetry.addData("Hold FF Deadband", pid.getHoldFeedforwardInDeadband());
         telemetry.addData("Effective kG", "%.4f", motor.getLastEffectiveKg());
         motor.appendTelemetry(telemetry, ModuleTestParameters.motorName);
+    }
+
+    private void updateAngleLimits() {
+        if (ModuleTestParameters.enableAngleLimits) {
+            motor.setAngleLimits(
+                    ModuleTestParameters.firstAngleLimitDegrees,
+                    ModuleTestParameters.secondAngleLimitDegrees,
+                    ModuleTestParameters.useLargeArcAngleLimit);
+        } else {
+            motor.disableAngleLimits();
+        }
     }
 
     private void updateGravityMode() {

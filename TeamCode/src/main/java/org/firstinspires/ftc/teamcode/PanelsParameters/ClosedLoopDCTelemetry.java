@@ -98,4 +98,24 @@ public class ClosedLoopDCTelemetry {
 
     @Sorter(sort = 44)
     public static int pidResetCount = 0;
+
+    @Sorter(sort = 45)
+    public static double limitedTarget = 0.0;
+    @Sorter(sort = 46)
+    public static double angleLimitA = 0.0;
+    @Sorter(sort = 47)
+    public static double angleLimitB = 0.0;
+    @Sorter(sort = 48)
+    public static double angleLimitArcStart = 0.0;
+    @Sorter(sort = 49)
+    public static double angleLimitArcEnd = 0.0;
+    @Sorter(sort = 50)
+    public static double angleLimitArcLength = 0.0;
+
+    @Sorter(sort = 51)
+    public static boolean angleLimits = false;
+    @Sorter(sort = 52)
+    public static boolean largeArcAngleLimit = false;
+    @Sorter(sort = 53)
+    public static boolean angleWrapping = true;
 }
