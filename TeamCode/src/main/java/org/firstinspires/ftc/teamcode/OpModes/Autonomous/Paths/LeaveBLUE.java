@@ -12,8 +12,8 @@ import org.firstinspires.ftc.teamcode.Config.RobotHardware;
 import org.firstinspires.ftc.teamcode.Modules.ArmIK2D;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
-@Autonomous(name = "Leave RED")
-public class LeaveRED extends OpMode {
+@Autonomous(name = "Leave BLUE")
+public class LeaveBLUE extends OpMode {
     private static final double UPPER_ARM_MASS_KG = 0.667;
     private static final double FOREARM_MASS_KG = 0.300;
     private static final double L1_METERS = 0.40;
@@ -109,12 +109,12 @@ public class LeaveRED extends OpMode {
         public Paths(Follower follower) {
             Path1 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(10.000, 82.000),
+                                    new Pose(134.000, 82.000),
 
-                                    new Pose(58.000, 85.000)
+                                    new Pose(86.000, 85.000)
                             )
                     )
-                    .setLinearHeadingInterpolation(Math.toRadians(270.0), Math.toRadians(0.0))
+                    .setLinearHeadingInterpolation(Math.toRadians(180.0), Math.toRadians(180.0))
                     .build();
 
         }
@@ -123,7 +123,7 @@ public class LeaveRED extends OpMode {
     @Override
     public void init() {
         follower = Constants.createFollower(hardwareMap);
-        follower.setPose(new Pose(12, 72, 0));
+        follower.setPose(new Pose(134, 82, 180));
         robotHardware = new RobotHardware(hardwareMap);
 
         robotHardware.cldcjoint1.init(true);
@@ -159,6 +159,7 @@ public class LeaveRED extends OpMode {
         updateMechanisms();
         publishTelemetry();
     }
+
 
     @Override
     public void loop() {
