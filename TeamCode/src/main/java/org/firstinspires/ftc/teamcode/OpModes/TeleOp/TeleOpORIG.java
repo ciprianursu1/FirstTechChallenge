@@ -29,7 +29,8 @@ public class TeleOpORIG extends OpMode {
 
     private static final double DISTANCE_PER_ROTATION = 125.66;
     private static final double UP_HEIGHT = 645;
-    private static final double DOWN_HEIGHT = 25;
+    private static final double DOWN_HEIGHT = 10;
+    private static final double MID_HEIGHT = 120;
     private static final double NORMAL_CARTESIAN_SPEED_MPS = 0.20;
     private static final double FINE_CARTESIAN_SPEED_MPS = 0.025;
     private static final double MAX_CONTROL_DT_SECONDS = 0.05;
@@ -84,7 +85,9 @@ public class TeleOpORIG extends OpMode {
     private RobotHardware robotHardware;
     private int sliderPosition = SLIDER_DOWN;
     private double sliderTarget;
-    private double sliderOffset;
+    private double sliderOffset0 = 0;
+    private double sliderOffset1 = 0;
+    private double sliderOffset2 = 0;
     private double joint1Target;
     private double joint2Target;
     private double targetX;
@@ -182,10 +185,30 @@ public class TeleOpORIG extends OpMode {
                 gamepad1.left_trigger > 0.5 || gamepad2.left_trigger > 0.5;
         if (sliderAdjustmentMode) {
             if (gamepad1.left_bumper || gamepad2.left_bumper) {
-                sliderOffset -= 5.0;
+                switch (sliderPosition){
+                    case SLIDER_UP:
+                        sliderOffset1 -= 3;
+                        break;
+                    case SLIDER_CLEARANCE:
+                        sliderOffset2 -= 2;
+                        break;
+                    case SLIDER_DOWN:
+                        sliderOffset0 -= 1;
+                        break;
+                }
             }
             if (gamepad1.right_bumper || gamepad2.right_bumper) {
-                sliderOffset += 5.0;
+                switch (sliderPosition){
+                    case SLIDER_UP:
+                        sliderOffset1 += 3;
+                        break;
+                    case SLIDER_CLEARANCE:
+                        sliderOffset2 += 2;
+                        break;
+                    case SLIDER_DOWN:
+                        sliderOffset0 += 1;
+                        break;
+                }
             }
         } else if (gamepad1.rightBumperWasPressed() || gamepad2.rightBumperWasPressed()) {
             sliderPosition = SLIDER_UP;
@@ -334,11 +357,11 @@ public class TeleOpORIG extends OpMode {
 
     private void updateMechanisms() {
         if (sliderPosition == SLIDER_DOWN) {
-            sliderTarget = 384.5 * DOWN_HEIGHT / DISTANCE_PER_ROTATION;
+            sliderTarget = 384.5 * (DOWN_HEIGHT + sliderOffset0) / DISTANCE_PER_ROTATION;
         } else if (sliderPosition == SLIDER_UP) {
-            sliderTarget = 384.5 * (UP_HEIGHT + sliderOffset) / DISTANCE_PER_ROTATION;
+            sliderTarget = 384.5 * (UP_HEIGHT + sliderOffset1) / DISTANCE_PER_ROTATION;
         } else {
-            sliderTarget = 384.5 * (DOWN_HEIGHT + 50.0) / DISTANCE_PER_ROTATION;
+            sliderTarget = 384.5 * (MID_HEIGHT + sliderOffset2) / DISTANCE_PER_ROTATION;
         }
 
         robotHardware.claw.setPosition(
@@ -462,7 +485,6 @@ public class TeleOpORIG extends OpMode {
         telemetry.addData("IK constrained", targetConstrained);
         telemetry.addData("Rear boundary safe", rearBoundarySafe);
         telemetry.addData("Slider state/target", "%d / %.1f", sliderPosition, sliderTarget);
-        telemetry.addData("Slider offset", "%.1f mm", sliderOffset);
         telemetry.addData("Pivot", "%.3f | ground reachable: %b",
                 pivotPosition, pivotHeadingReachable);
         robotHardware.cldcjoint1.appendTelemetry(telemetry, "joint1");

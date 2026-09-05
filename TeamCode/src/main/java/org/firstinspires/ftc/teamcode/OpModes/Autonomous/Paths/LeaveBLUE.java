@@ -111,7 +111,7 @@ public class LeaveBLUE extends OpMode {
                             new BezierLine(
                                     new Pose(134.000, 82.000),
 
-                                    new Pose(86.000, 85.000)
+                                    new Pose(87.000, 96.000)
                             )
                     )
                     .setLinearHeadingInterpolation(Math.toRadians(180.0), Math.toRadians(180.0))
